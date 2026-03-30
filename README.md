@@ -67,9 +67,7 @@ because it:
 
 ## Getting Started
 
-No installation required. Visit the live app:
-
-👉 [centrinnovations.github.io/hexagons](https://centrinnovations.github.io/hexagons/)
+No installation required. Visit the [centrinnovations.github.io/hexagons](live app).
 
 To run locally:
 ```bash
