@@ -5,7 +5,9 @@ visual facilitation method that helps groups surface connections between
 concepts, bridge diverse ways of knowing, and build shared understanding 
 across difference.
 
-🔗 **[Live App](https://centrinnovations.github.io/hexagons/)**
+[Live App](https://centrinnovations.github.io/hexagons/)
+
+![An example of hexagonal thinking in action](hexagons.png)
 
 ---
 

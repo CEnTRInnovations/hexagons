@@ -13,11 +13,12 @@
     .container{ max-width:1500px; margin:0 auto; padding:16px; display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:16px }
     .card{ background:var(--surface); border:1px solid var(--border); border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.06) }
     .pad{ padding:12px }
-    .btn{ cursor:pointer; border:1px solid var(--border); background:#fff; padding:6px 10px; border-radius:8px; font-family:'Inter',sans-serif; }
+    .btn{ cursor:pointer; border:1px solid var(--border); background:#fff; padding:6px 10px; border-radius:8px; font-family:'Inter',sans-serif; font-size:13px; }
+    .btn:hover{ background:#f5f0e8 }
     .btn[disabled]{ opacity:.5; cursor:default }
-    .swatch{ width:28px; height:28px; border-radius:6px; border:2px solid transparent }
-    .swatch.active{ border-color:var(--border) }
-    .hint{ position:absolute; top:12px; right:12px; background:rgba(255,255,255,.85); border:1px solid var(--border); border-radius:8px; padding:4px 8px; font-size:12px; font-family:'Inter',sans-serif; }
+    .swatch{ width:28px; height:28px; border-radius:6px; border:2px solid transparent; cursor:pointer; }
+    .swatch.active{ border-color:#333 }
+    .hint{ position:absolute; top:12px; right:12px; background:rgba(255,255,255,.85); border:1px solid var(--border); border-radius:8px; padding:4px 8px; font-size:12px; font-family:'Inter',sans-serif; pointer-events:none; }
     .row{ display:flex; align-items:center; justify-content:space-between }
     .label-sm{ font-size:12px; font-family:'Inter',sans-serif; }
     .grid{ display:grid; gap:12px }
@@ -28,6 +29,9 @@
     .controls{ grid-column:span 12 }
     .canvas{ grid-column:span 12 }
     @media (min-width: 1024px){ .controls{ grid-column:span 3 } .canvas{ grid-column:span 9 } }
+    .adj-item{ background:#fff; border-radius:6px; padding:4px 8px; border:1px solid var(--border); }
+    .selected-editor-row{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+    .selected-editor-row label{ font-size:12px; min-width:40px; }
   </style>
 </head>
 <body>
@@ -56,12 +60,12 @@
       </div>
       <div style="border-top:1px solid var(--border); padding-top:12px" class="grid">
         <div class="heading" style="font-weight:600">Selected hex</div>
-        <div id="selectedEditor"></div>
+        <div id="selectedEditor"><span class="t-xs muted">Click a hex to select it.</span></div>
       </div>
       <div style="border-top:1px solid var(--border); padding-top:12px" class="grid">
         <div class="heading" style="font-weight:600">Data</div>
         <div style="display:flex; flex-wrap:wrap; gap:8px">
-          <label class="btn">
+          <label class="btn" style="cursor:pointer;">
             <input id="importJSON" type="file" accept="application/json" style="display:none" />
             Import JSON
           </label>
@@ -72,23 +76,486 @@
       <div style="border-top:1px solid var(--border); padding-top:12px">
         <div class="heading" style="font-weight:600; margin-bottom:4px">Adjacency</div>
         <div id="adjacencyList" style="max-height:260px; overflow:auto; display:grid; gap:6px; font-size:13px"></div>
-        <div id="clustersText" class="t-xs muted"></div>
+        <div id="clustersText" class="t-xs muted" style="margin-top:6px;"></div>
       </div>
     </div>
   </div>
   <div class="card canvas" style="position:relative">
-    <div class="pad" style="padding:8px">
+    <div class="pad" style="padding:8px; overflow:auto;">
       <svg id="canvas" width="1400" height="900" style="background:#fff; border-radius:12px; box-shadow:inset 0 1px 2px rgba(0,0,0,.06); cursor:crosshair; user-select:none; display:block">
         <g id="grid"></g>
         <g id="edges"></g>
         <g id="hexes"></g>
       </svg>
-      <div class="hint">Click canvas to add. Drag to move.</div>
+      <div class="hint">Click canvas to add · Drag to move · Del to remove</div>
     </div>
   </div>
 </div>
+
 <script>
-  // Script content omitted for brevity. Use your existing JS logic unchanged.
+// ─── Constants & state ───────────────────────────────────────────────────────
+const PALETTE = [
+  '#F4A261','#E76F51','#E9C46A','#2A9D8F','#264653',
+  '#A8DADC','#457B9D','#E63946','#8ECAE6','#B5838D',
+  '#6D6875','#C9CBA3','#FFE1A8','#90BE6D','#F9C74F'
+];
+
+let hexes = [];      // [{id, x, y, text, color, size}]
+let nextId = 1;
+let selectedId = null;
+let hexSize = 60;
+let snapToGrid = true;
+let showGrid = false;
+let newColor = PALETTE[0];
+
+// drag state
+let dragging = null; // {id, offsetX, offsetY}
+let addMode = false; // true while mouse is pressed on empty canvas
+
+// ─── SVG helpers ─────────────────────────────────────────────────────────────
+const svg   = document.getElementById('canvas');
+const gGrid = document.getElementById('grid');
+const gEdge = document.getElementById('edges');
+const gHex  = document.getElementById('hexes');
+
+function hexPoints(cx, cy, r) {
+  const pts = [];
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 180 * (60 * i - 30);
+    pts.push(`${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`);
+  }
+  return pts.join(' ');
+}
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+// ─── Grid ────────────────────────────────────────────────────────────────────
+function renderGrid() {
+  gGrid.innerHTML = '';
+  if (!showGrid) return;
+  const r = hexSize;
+  const w = parseFloat(svg.getAttribute('width'));
+  const h = parseFloat(svg.getAttribute('height'));
+  const colW = r * Math.sqrt(3);
+  const rowH = r * 1.5;
+  for (let row = 0; row * rowH < h + r; row++) {
+    for (let col = 0; col * colW < w + r; col++) {
+      const cx = col * colW + (row % 2 === 1 ? colW / 2 : 0);
+      const cy = row * rowH;
+      const p = svgEl('polygon', {
+        points: hexPoints(cx, cy, r),
+        fill: 'none',
+        stroke: '#ccc',
+        'stroke-width': '0.5'
+      });
+      gGrid.appendChild(p);
+    }
+  }
+}
+
+// ─── Snap ────────────────────────────────────────────────────────────────────
+function snapPos(x, y) {
+  const r = hexSize;
+  const colW = r * Math.sqrt(3);
+  const rowH = r * 1.5;
+  let bestDist = Infinity, bestX = x, bestY = y;
+  const rows = Math.ceil(parseFloat(svg.getAttribute('height')) / rowH) + 2;
+  const cols = Math.ceil(parseFloat(svg.getAttribute('width'))  / colW) + 2;
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const cx = col * colW + (row % 2 === 1 ? colW / 2 : 0);
+      const cy = row * rowH;
+      const d = Math.hypot(x - cx, y - cy);
+      if (d < bestDist) { bestDist = d; bestX = cx; bestY = cy; }
+    }
+  }
+  return [bestX, bestY];
+}
+
+// ─── Adjacency ───────────────────────────────────────────────────────────────
+function getAdjacent() {
+  const pairs = [];
+  const r = hexSize * 1.05; // tolerance ~5%
+  const threshold = r * Math.sqrt(3) * 1.1;
+  for (let i = 0; i < hexes.length; i++) {
+    for (let j = i + 1; j < hexes.length; j++) {
+      const d = Math.hypot(hexes[i].x - hexes[j].x, hexes[i].y - hexes[j].y);
+      if (d < threshold) pairs.push([hexes[i].id, hexes[j].id]);
+    }
+  }
+  return pairs;
+}
+
+function getClusters(pairs) {
+  const parent = {};
+  hexes.forEach(h => { parent[h.id] = h.id; });
+  function find(x) { return parent[x] === x ? x : (parent[x] = find(parent[x])); }
+  function union(a, b) { parent[find(a)] = find(b); }
+  pairs.forEach(([a, b]) => union(a, b));
+  const groups = {};
+  hexes.forEach(h => {
+    const p = find(h.id);
+    if (!groups[p]) groups[p] = [];
+    groups[p].push(h.id);
+  });
+  return Object.values(groups);
+}
+
+function renderAdjacency() {
+  const pairs = getAdjacent();
+  const adjDiv = document.getElementById('adjacencyList');
+  adjDiv.innerHTML = '';
+  if (pairs.length === 0) {
+    adjDiv.innerHTML = '<span class="t-xs muted">No adjacent hexes yet.</span>';
+  } else {
+    pairs.forEach(([a, b]) => {
+      const ha = hexes.find(h => h.id === a);
+      const hb = hexes.find(h => h.id === b);
+      const d = document.createElement('div');
+      d.className = 'adj-item';
+      d.textContent = `${ha ? (ha.text || '(empty)') : a}  ↔  ${hb ? (hb.text || '(empty)') : b}`;
+      adjDiv.appendChild(d);
+    });
+  }
+  const clusters = getClusters(pairs);
+  const nonSingle = clusters.filter(c => c.length > 1);
+  const ct = document.getElementById('clustersText');
+  ct.textContent = nonSingle.length
+    ? `${nonSingle.length} cluster${nonSingle.length > 1 ? 's' : ''} · ${hexes.length} total hexes`
+    : `${hexes.length} total hexes`;
+
+  // draw edges
+  gEdge.innerHTML = '';
+  pairs.forEach(([a, b]) => {
+    const ha = hexes.find(h => h.id === a);
+    const hb = hexes.find(h => h.id === b);
+    if (!ha || !hb) return;
+    const l = svgEl('line', {
+      x1: ha.x, y1: ha.y, x2: hb.x, y2: hb.y,
+      stroke: '#ccc', 'stroke-width': 1.5, 'stroke-dasharray': '4 3'
+    });
+    gEdge.appendChild(l);
+  });
+}
+
+// ─── Render hexes ─────────────────────────────────────────────────────────────
+function wrapText(text, maxCharsPerLine) {
+  const words = text.split(' ');
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    if ((cur + (cur ? ' ' : '') + w).length <= maxCharsPerLine) {
+      cur += (cur ? ' ' : '') + w;
+    } else {
+      if (cur) lines.push(cur);
+      cur = w.length > maxCharsPerLine ? w.slice(0, maxCharsPerLine - 1) + '…' : w;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines.slice(0, 3);
+}
+
+function renderHex(h) {
+  const g = svgEl('g', { 'data-id': h.id, style: 'cursor:grab' });
+
+  const poly = svgEl('polygon', {
+    points: hexPoints(h.x, h.y, h.size),
+    fill: h.color,
+    stroke: selectedId === h.id ? '#222' : 'rgba(0,0,0,0.18)',
+    'stroke-width': selectedId === h.id ? 2.5 : 1.5
+  });
+  g.appendChild(poly);
+
+  const lines = wrapText(h.text || '', Math.floor(h.size / 7));
+  const lineH = Math.max(12, h.size * 0.22);
+  const totalH = lines.length * lineH;
+  const startY = h.y - totalH / 2 + lineH * 0.5;
+
+  lines.forEach((line, i) => {
+    const t = svgEl('text', {
+      x: h.x, y: startY + i * lineH,
+      'text-anchor': 'middle',
+      'dominant-baseline': 'middle',
+      'font-family': 'Inter, sans-serif',
+      'font-size': Math.max(9, h.size * 0.19),
+      fill: isLight(h.color) ? '#333' : '#fff',
+      'pointer-events': 'none'
+    });
+    t.textContent = line;
+    g.appendChild(t);
+  });
+
+  // events
+  g.addEventListener('mousedown', e => onHexMouseDown(e, h.id));
+  g.addEventListener('touchstart', e => onHexTouchStart(e, h.id), { passive: false });
+
+  return g;
+}
+
+function isLight(hex) {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return (r*299+g*587+b*114)/1000 > 140;
+}
+
+function render() {
+  gHex.innerHTML = '';
+  hexes.forEach(h => gHex.appendChild(renderHex(h)));
+  renderGrid();
+  renderAdjacency();
+  renderSelectedEditor();
+}
+
+// ─── Selected editor ─────────────────────────────────────────────────────────
+function renderSelectedEditor() {
+  const div = document.getElementById('selectedEditor');
+  const h = hexes.find(x => x.id === selectedId);
+  if (!h) {
+    div.innerHTML = '<span class="t-xs muted">Click a hex to select it.</span>';
+    return;
+  }
+  div.innerHTML = '';
+
+  // text
+  const textRow = document.createElement('div');
+  textRow.className = 'selected-editor-row';
+  const tLabel = document.createElement('label');
+  tLabel.textContent = 'Text';
+  const tInput = document.createElement('input');
+  tInput.type = 'text';
+  tInput.value = h.text;
+  tInput.style.flex = '1';
+  tInput.addEventListener('input', () => {
+    h.text = tInput.value;
+    render();
+  });
+  textRow.appendChild(tLabel);
+  textRow.appendChild(tInput);
+  div.appendChild(textRow);
+
+  // color swatches
+  const cLabel = document.createElement('div');
+  cLabel.className = 'label-sm';
+  cLabel.textContent = 'Color';
+  div.appendChild(cLabel);
+  const swatchRow = document.createElement('div');
+  swatchRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;';
+  PALETTE.forEach(c => {
+    const s = document.createElement('div');
+    s.className = 'swatch' + (h.color === c ? ' active' : '');
+    s.style.background = c;
+    s.addEventListener('click', () => { h.color = c; render(); });
+    swatchRow.appendChild(s);
+  });
+  div.appendChild(swatchRow);
+
+  // delete
+  const delBtn = document.createElement('button');
+  delBtn.className = 'btn';
+  delBtn.textContent = '🗑 Delete hex';
+  delBtn.style.width = '100%';
+  delBtn.addEventListener('click', () => {
+    hexes = hexes.filter(x => x.id !== selectedId);
+    selectedId = null;
+    render();
+  });
+  div.appendChild(delBtn);
+}
+
+// ─── Color swatches (new hex) ────────────────────────────────────────────────
+function buildNewColorSwatches() {
+  const div = document.getElementById('newColorSwatches');
+  div.innerHTML = '';
+  PALETTE.forEach(c => {
+    const s = document.createElement('div');
+    s.className = 'swatch' + (c === newColor ? ' active' : '');
+    s.style.background = c;
+    s.addEventListener('click', () => {
+      newColor = c;
+      buildNewColorSwatches();
+    });
+    div.appendChild(s);
+  });
+}
+
+// ─── Controls ────────────────────────────────────────────────────────────────
+const sizeInput = document.getElementById('size');
+const sizeVal   = document.getElementById('sizeVal');
+sizeInput.value = hexSize;
+sizeVal.textContent = hexSize;
+sizeInput.addEventListener('input', () => {
+  hexSize = parseInt(sizeInput.value);
+  sizeVal.textContent = hexSize;
+  renderGrid();
+});
+
+document.getElementById('showGrid').addEventListener('change', e => {
+  showGrid = e.target.checked;
+  renderGrid();
+});
+document.getElementById('snap').addEventListener('change', e => {
+  snapToGrid = e.target.checked;
+});
+
+// ─── Canvas click (add hex) ───────────────────────────────────────────────────
+function svgCoords(e) {
+  const rect = svg.getBoundingClientRect();
+  const scaleX = parseFloat(svg.getAttribute('width'))  / rect.width;
+  const scaleY = parseFloat(svg.getAttribute('height')) / rect.height;
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return [(clientX - rect.left) * scaleX, (clientY - rect.top) * scaleY];
+}
+
+svg.addEventListener('click', e => {
+  if (e.target !== svg && e.target.closest('#hexes g')) return; // clicked a hex
+  if (dragging) return;
+
+  let [x, y] = svgCoords(e);
+  if (snapToGrid) [x, y] = snapPos(x, y);
+
+  const text = document.getElementById('newText').value.trim();
+  hexes.push({ id: nextId++, x, y, text, color: newColor, size: hexSize });
+  selectedId = hexes[hexes.length - 1].id;
+  render();
+});
+
+// ─── Drag (mouse) ─────────────────────────────────────────────────────────────
+function onHexMouseDown(e, id) {
+  e.stopPropagation();
+  selectedId = id;
+  const [mx, my] = svgCoords(e);
+  const h = hexes.find(x => x.id === id);
+  dragging = { id, offsetX: mx - h.x, offsetY: my - h.y };
+  render();
+}
+
+svg.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  let [mx, my] = svgCoords(e);
+  const h = hexes.find(x => x.id === dragging.id);
+  if (!h) return;
+  h.x = mx - dragging.offsetX;
+  h.y = my - dragging.offsetY;
+  render();
+});
+
+svg.addEventListener('mouseup', e => {
+  if (!dragging) return;
+  if (snapToGrid) {
+    const h = hexes.find(x => x.id === dragging.id);
+    if (h) [h.x, h.y] = snapPos(h.x, h.y);
+  }
+  dragging = null;
+  render();
+});
+
+svg.addEventListener('mouseleave', () => {
+  if (dragging) {
+    if (snapToGrid) {
+      const h = hexes.find(x => x.id === dragging.id);
+      if (h) [h.x, h.y] = snapPos(h.x, h.y);
+    }
+    dragging = null;
+    render();
+  }
+});
+
+// ─── Drag (touch) ─────────────────────────────────────────────────────────────
+function onHexTouchStart(e, id) {
+  e.preventDefault();
+  e.stopPropagation();
+  selectedId = id;
+  const [tx, ty] = svgCoords(e);
+  const h = hexes.find(x => x.id === id);
+  dragging = { id, offsetX: tx - h.x, offsetY: ty - h.y };
+  render();
+}
+
+svg.addEventListener('touchmove', e => {
+  if (!dragging) return;
+  e.preventDefault();
+  let [tx, ty] = svgCoords(e);
+  const h = hexes.find(x => x.id === dragging.id);
+  if (!h) return;
+  h.x = tx - dragging.offsetX;
+  h.y = ty - dragging.offsetY;
+  render();
+}, { passive: false });
+
+svg.addEventListener('touchend', () => {
+  if (!dragging) return;
+  if (snapToGrid) {
+    const h = hexes.find(x => x.id === dragging.id);
+    if (h) [h.x, h.y] = snapPos(h.x, h.y);
+  }
+  dragging = null;
+  render();
+});
+
+// ─── Keyboard (delete) ────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (document.activeElement.tagName === 'INPUT') return;
+    if (selectedId != null) {
+      hexes = hexes.filter(h => h.id !== selectedId);
+      selectedId = null;
+      render();
+    }
+  }
+  if (e.key === 'Escape') {
+    selectedId = null;
+    render();
+  }
+});
+
+// ─── Export / Import ──────────────────────────────────────────────────────────
+document.getElementById('btnExportJSON').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(hexes, null, 2)], { type: 'application/json' });
+  dl(blob, 'hexagonal-thinking.json');
+});
+
+document.getElementById('btnExportCSV').addEventListener('click', () => {
+  const rows = [['id','text','color','x','y','size']];
+  hexes.forEach(h => rows.push([h.id, `"${(h.text||'').replace(/"/g,'""')}"`, h.color, Math.round(h.x), Math.round(h.y), h.size]));
+  const csv = rows.map(r => r.join(',')).join('\n');
+  dl(new Blob([csv], { type: 'text/csv' }), 'hexagonal-thinking.csv');
+});
+
+document.getElementById('importJSON').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (Array.isArray(data)) {
+        hexes = data;
+        nextId = Math.max(0, ...hexes.map(h => h.id)) + 1;
+        selectedId = null;
+        render();
+      }
+    } catch(err) { alert('Invalid JSON'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+function dl(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+buildNewColorSwatches();
+render();
 </script>
 </body>
 </html>
