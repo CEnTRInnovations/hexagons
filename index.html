@@ -766,7 +766,8 @@ document.getElementById('btnExportJSON').addEventListener('click', () => {
 });
 document.getElementById('btnExportCSV').addEventListener('click', () => {
   const rawSlug = document.getElementById('slugInput').value.trim();
-  const slug = rawSlug ? rawSlug.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9._-]/g, '') : 'apiary';
+  const sanitized = rawSlug.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9._-]/g, '');
+  const slug = sanitized || 'apiary';
   const date = new Date().toISOString().slice(0, 10);
   const pairs = getAdjacent();
   const lines = ['from,to'];
