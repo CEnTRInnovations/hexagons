@@ -750,6 +750,11 @@ document.addEventListener('keydown', e => {
 });
 
 // ─── Export / Import ──────────────────────────────────────────────────────────
+function csvField(str) {
+  const s = String(str || '');
+  return (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r'))
+    ? `"${s.replace(/"/g, '""')}"` : s;
+}
 function dl(blob, name) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
 }
@@ -757,9 +762,18 @@ document.getElementById('btnExportJSON').addEventListener('click', () => {
   dl(new Blob([JSON.stringify(hexes, null, 2)], { type: 'application/json' }), 'apiary.json');
 });
 document.getElementById('btnExportCSV').addEventListener('click', () => {
-  const rows = [['id','text','color','x','y','size']];
-  hexes.forEach(h => rows.push([h.id, `"${(h.text||'').replace(/"/g,'""')}"`, h.color, Math.round(h.x), Math.round(h.y), h.size]));
-  dl(new Blob([rows.map(r => r.join(',')).join('\n')], { type: 'text/csv' }), 'apiary.csv');
+  const rawSlug = document.getElementById('slugInput').value.trim();
+  const slug = rawSlug ? rawSlug.replace(/\s+/g, '-') : 'apiary';
+  const date = new Date().toISOString().slice(0, 10);
+  const pairs = getAdjacent();
+  const lines = ['from,to'];
+  pairs.forEach(([a, b]) => {
+    const from = (hexes.find(h => h.id === a)?.text || '').trim();
+    const to   = (hexes.find(h => h.id === b)?.text || '').trim();
+    if (!from || !to || from === to) return;
+    lines.push(`${csvField(from)},${csvField(to)}`);
+  });
+  dl(new Blob([lines.join('\n')], { type: 'text/csv' }), `${slug}_${date}.csv`);
 });
 document.getElementById('importJSON').addEventListener('change', e => {
   const file = e.target.files[0]; if (!file) return;
