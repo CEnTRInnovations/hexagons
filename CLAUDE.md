@@ -18,7 +18,7 @@ The tool's core contribution is making adjacency relationships computable: which
 
 - **Single-file SPA**: Everything lives in `index.html` — HTML, CSS, and vanilla JavaScript. No build system, no npm, no bundler.
 - **Rendering**: SVG canvas (`<svg id="canvas">`) with three layer groups: `#grid`, `#edges`, `#hexes`.
-- **Dependencies**: Google Fonts only (`Alegreya`, `Alegreya Sans`, `Alegreya Sans SC`). No JavaScript libraries.
+- **Dependencies**: Google Fonts only (`Alegreya`, `Alegreya Sans`, `Alegreya Sans SC`, `Material Symbols Outlined` for toolbar icons). No JavaScript libraries.
 - **Deployment**: GitHub Pages (static hosting). The `CNAME` file points to a custom domain.
 
 ---
@@ -79,69 +79,42 @@ Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `show
 | `svgCoords(e)` | Translates a pointer event to SVG-space coordinates |
 | `onHexMouseDown(e, id)` | Initiates drag on a hex; handles click-vs-drag disambiguation |
 | `dl(blob, name)` | Triggers a file download from a Blob |
+| `csvField(str)` | RFC 4180 quoting for a single CSV field |
+| `hashId(str)` | Deterministic, non-cryptographic hash → short stable id string for a contributor label |
+| `slugify(label)` | Filename-safe slug: lowercase, whitespace → `_`, strips other unsafe characters |
+| `getContributorLabel()` | Reads the trimmed value of the Group field |
+| `adjacentTermPairs()` | Shared edge source for both Export csv and Save — labeled, non-self-loop adjacent hex pairs as `{from, to}` |
+| `loadBeeData(data)` | Rebuilds the hex canvas from a parsed `.bee` file's `edges` (see Import / Export) |
 
 ---
 
 ## Import / Export
 
-### Import JSON
-Accepts a JSON array of hex objects (same shape as the `hexes` array). Replaces the current canvas state.
+The top toolbar (below the nav bar, above the two-column layout) has one field — **Group** — and three actions: **Load**, **Save**, **Export csv**. There is no raw node-list import/export anymore; both file formats are edge-based.
 
-### Export JSON
-Downloads the full `hexes` array as `apiary.json`. Suitable for session continuity and cross-session re-import.
+### Group
+Free-text field (`#contributorLabelInput`, placeholder `e.g. Group A`), spaces allowed. Internally still referred to as the "contributor label" in code (id, function names) since it maps 1:1 onto the `contributor.label` field in the `.bee` interchange spec. Feeds two things:
+- `hashId(label)` — a short deterministic id (e.g. `cwdsgcg`) written into `.bee` files as `contributor.id`. Same label always produces the same id.
+- `slugify(label)` — lowercased, whitespace collapsed to `_`, unsafe characters stripped — used in both export filenames.
 
-### Export CSV (current behavior — see gap below)
-Downloads a **node list** with columns: `id, text, color, x, y, size`.
+### Save
+Writes a `.bee` JSON file: `{ version, contributor: { label, id }, edges: [{ from, to }] }`, matching the interchange spec Apiary Hive consumes (`bee-file-spec.json`, in the `apiary-hive` repo). `weight`/`effect` are omitted from each edge — Apiary doesn't collect either yet, and the spec defaults both to `1` on ingest, same rationale as `NO WEIGHT`/`NO POLARITY` below. Edges come from `adjacentTermPairs()`. Filename: `{slug}.bee` (no date — a stable working-file name, unlike the dated CSV).
 
----
+### Load
+Reads a `.bee` file and rebuilds the canvas from its `edges`. Positions aren't part of the `.bee` spec, so `loadBeeData()` re-lays-out the terms on the same hex grid used by snap-to-grid: it walks the edge graph and seats each term in a free grid cell next to an already-placed neighbor. The placement is constrained so it will **never seat two unrelated terms as grid-neighbors** — a cell is only valid for a term if every already-occupied grid-neighbor of that cell is a real graph-neighbor of that term. This is deliberately a correctness-over-completeness tradeoff:
+- **Never fabricates an adjacency.** Verified by round-tripping synthetic graphs (dense random graphs, disconnected components, triangles, high-degree hubs) through the actual code and diffing expected vs. reconstructed edges — zero false positives across all cases tested.
+- **May not show every true edge as touching.** A term connected to more than 6 others (the hex grid's physical neighbor limit) or part of a tightly-closed cluster (e.g. a triangle) may end up with some of its edges not visually adjacent after reload, even though the relationship still existed in the source file.
+- **Terms with no edge at all can't round-trip.** The `.bee` format only carries the edge list, not isolated nodes — a hex with zero adjacent neighbors is dropped by Save and can never be restored by Load. This mirrors the CSV export's existing isolated-node behavior (see Edge Rules below), now extended to Save/Load too.
+- On success, also restores `contributor.label` into the Group field.
 
-## ⚠️ Known Gap: CSV Export Does Not Match CEnTR\*CANON Ingestion Contract
-
-**This is the most important open issue in the codebase.**
-
-CEnTR\*CANON's `mod_gather` module expects an **undirected edge list** from Apiary, not a node list. The authoritative contract is in `docs/apiary-output-specification.md`.
-
-### Required output schema
-
-```csv
-from,to,weight,polarity
-```
-
-| Column | Required | Default on missing |
-|---|---|---|
-| `from` | Yes | — (row dropped if empty) |
-| `to` | Yes | — (row dropped if empty) |
-| `weight` | No | `1` |
-| `polarity` | No | `1` (supportive) |
-
-### What needs to change in `index.html`
-
-The `btnExportCSV` click handler (currently around line 757) must be replaced. Instead of iterating over `hexes`, it should:
-
-1. Call `getAdjacent()` to retrieve the array of touching `[hexA, hexB]` pairs.
-2. For each pair, emit a row with `from` = `hexA.text`, `to` = `hexB.text`.
-3. Omit `weight` and `polarity` columns for now (CEnTR\*CANON will impute defaults; this produces a `NO WEIGHT` + `NO POLARITY` file state, which is fully acceptable for v1).
-4. Apply RFC 4180 quoting: fields containing commas or double-quotes must be wrapped in double-quotes.
-
-### Edge rules to respect
-- Self-loops (`from == to`) should not be exported.
-- Hexes with no adjacent neighbors contribute no rows (isolated nodes add no structural signal).
-- Duplicate pairs are acceptable; CEnTR\*CANON sums weights and averages polarity on its end.
-
-### Recommended filename convention
-```
-{composite_slug}_{YYYY-MM-DD}.csv
-```
-Example: `student-advisory-board_2026-05-26.csv`. Consider adding a text input to the Data panel for the contributor/composite slug before export.
-
-### Validation states in CEnTR\*CANON
-After upload, `mod_gather` assigns one of: `VALID`, `NO WEIGHT`, `NO POLARITY`, or `SCHEMA MISMATCH`. The last state blocks the Survey phase gate. Producing a correct edge list is therefore a prerequisite for downstream CEnTR\*MAP analysis.
+### Export csv
+Downloads an **edge list** — `from,to` columns, RFC 4180 quoted, built from `adjacentTermPairs()` — matching the CEnTR\*CANON ingestion contract in `docs/apiary-output-specification.md`. `weight`/`polarity` are omitted (produces the acceptable `NO WEIGHT` + `NO POLARITY` file state). Filename: `{slug}_{YYYY-MM-DD}.csv` (dated — a point-in-time deliverable, unlike Save).
 
 ---
 
 ## Adjacency Detection
 
-`getAdjacent()` uses Euclidean distance between hex centers. Two hexes are adjacent if their center-to-center distance is less than `hexSize * 2 * 0.95` (a 5% tolerance accommodates imperfect placement). This is the same proximity data that needs to drive the CEnTR\*CANON CSV export.
+`getAdjacent()` uses Euclidean distance between hex centers. Two hexes are adjacent if their center-to-center distance is less than `hexSize * Math.sqrt(3) * 1.05 * 1.1` (≈ `hexSize * 2`, a 15.5% tolerance above the exact hex-grid neighbor distance to accommodate imperfect placement). This is the same proximity data that drives Export csv and Save.
 
 `getClusters(pairs)` runs union-find over the adjacent pairs to identify connected components. The cluster count is displayed in the panel (`#clustersText`).
 
@@ -161,16 +134,16 @@ Two-column responsive grid (CSS Grid): a 280px control panel on the left and the
 
 ## Extending the App
 
-- **Add a `weight` UI**: A range input or numeric field on the Selected Hex editor, stored as `h.weight` on the hex object. The adjacency export could then read edge weight from the average of the two adjacent hexes' weights, or from a separate edge data structure.
-- **Add a `polarity` selector**: A three-state toggle (`-1` / `0` / `1`) per adjacency pair, requiring an edge data structure keyed on `[idA, idB]` pairs.
-- **Composite slug input**: A text field in the Data panel that pre-fills the export filename with the contributor/perspective name.
-- **Multi-session import**: Allow loading a second JSON file to overlay a second contributor's map for comparison.
+- **Add a `weight` UI**: A range input or numeric field on the Selected Hex editor, stored as `h.weight` on the hex object. `adjacentTermPairs()`/the `.bee` export could then read edge weight from the average of the two adjacent hexes' weights, or from a separate edge data structure.
+- **Add a `polarity` selector**: A three-state toggle (`-1` / `0` / `1`) per adjacency pair, requiring an edge data structure keyed on `[idA, idB]` pairs. Would populate `effect` in the `.bee` export and `polarity` in the CSV, moving both out of their current `NO WEIGHT`/`NO POLARITY`-equivalent states.
+- **Multi-session load**: Allow loading a second `.bee` file to overlay a second contributor's map for comparison, rather than Load always replacing the canvas outright.
+- **Session-lossless save (optional, non-spec)**: Save/Load are edge-based by design (see Import / Export), so isolated hexes and exact positions/colors don't round-trip. If that's ever a problem in practice, the `.bee` format's `additionalProperties: true` would allow a non-standard extra field (e.g. `hexes`) carrying the full canvas snapshot alongside the standard `edges`, without breaking spec compliance for downstream consumers that only read `edges`/`contributor`.
 
 ---
 
 ## Project Context
 
-Apiary is part of the **CEnTRInnovations open tools ecosystem**. Its primary downstream consumer is **CEnTR\*CANON**, which runs the `mod_gather` → `mod_cartography` pipeline for community-engaged research vocabulary mapping. Apiary maps encode a single contributor's (or composite perspective's) relational understanding of CE-R vocabulary as an undirected weighted graph.
+Apiary is part of the **CEnTRInnovations open tools ecosystem**. Its immediate downstream consumer is **Apiary Hive**, which gathers `.bee` files from multiple contributor Hives and consolidates their vocabulary into one canonical term set before handing off to **CEnTR\*CANON**'s `mod_gather` → `mod_cartography` pipeline. Apiary maps encode a single contributor's (or composite perspective's) relational understanding of CE-R vocabulary as an undirected graph — exported either as a `.bee` file (`contributor.label`/`contributor.id` + edges, for Apiary Hive) or as a CSV edge list (`from,to`, for direct CEnTR\*CANON ingestion per `docs/apiary-output-specification.md`).
 
 Related infrastructure: CEnTR\*MAP (spatial analysis), CEnTR\*SEEK (literature synthesis), CEnTR\*IMPACT (impact mapping), CAFE Lab (the coordinating research lab).
 

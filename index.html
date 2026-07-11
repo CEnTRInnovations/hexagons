@@ -5,6 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Apiary — Hexagonal Thinking</title>
   <link href="https://fonts.googleapis.com/css2?family=Alegreya:ital,wght@0,400;0,500;1,400&family=Alegreya+Sans:wght@300;400;500&family=Alegreya+Sans+SC:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0&display=swap" rel="stylesheet">
+  <style>
+    .material-symbols-outlined {
+      font-family: 'Material Symbols Outlined';
+      font-weight: normal;
+      font-style: normal;
+      font-size: 18px;
+      line-height: 1;
+      display: inline-block;
+      white-space: nowrap;
+      word-wrap: normal;
+      direction: ltr;
+      -webkit-font-feature-settings: 'liga';
+      -webkit-font-smoothing: antialiased;
+    }
+  </style>
   <style>
     /* ── CEnTRInnovations design system ── */
     :root {
@@ -67,13 +83,60 @@
     }
     .a-nav-brand span { color: var(--challenge); }
 
+    /* ── TOOLBAR ── */
+    .a-toolbar {
+      background: var(--bg-light);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 56px; z-index: 99;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.6rem 1.25rem;
+      flex-wrap: wrap;
+    }
+    .a-toolbar-field {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .a-toolbar-field label {
+      font-family: "Alegreya Sans SC", "Alegreya Sans", sans-serif;
+      font-size: 0.67rem;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .a-toolbar-field input[type="text"] {
+      width: 180px;
+    }
+    .a-toolbar-btn {
+      font-family: "Alegreya Sans SC", "Alegreya Sans", sans-serif;
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 0.5rem 0.85rem;
+      cursor: pointer;
+      background: var(--secondary);
+      color: #fff;
+      transition: opacity 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .a-toolbar-btn .material-symbols-outlined { font-size: 18px; }
+    .a-toolbar-btn:hover { opacity: 0.85; }
+    .a-toolbar-btn:disabled { opacity: 0.4; cursor: default; }
+
     /* ── LAYOUT ── */
     .a-layout {
       display: grid;
       grid-template-columns: 1fr;
       gap: 1rem;
       padding: 1rem;
-      height: calc(100vh - 56px);
+      height: calc(100vh - 56px - 57px);
     }
     @media (min-width: 1024px) {
       .a-layout { grid-template-columns: 280px 1fr; }
@@ -290,6 +353,26 @@
   </div>
 </nav>
 
+<div class="a-toolbar">
+  <div class="a-toolbar-field">
+    <label for="contributorLabelInput">Group</label>
+    <input id="contributorLabelInput" type="text" placeholder="e.g. Group A" />
+  </div>
+  <label class="a-toolbar-btn" style="cursor:pointer;">
+    <span class="material-symbols-outlined">file_open</span>
+    Load
+    <input id="loadFile" type="file" accept=".bee,application/json" style="display:none" />
+  </label>
+  <button id="btnSave" class="a-toolbar-btn">
+    <span class="material-symbols-outlined">save</span>
+    Save
+  </button>
+  <button id="btnExportCSV" class="a-toolbar-btn">
+    <span class="material-symbols-outlined">download</span>
+    Export csv
+  </button>
+</div>
+
 <div class="a-layout">
 
   <!-- CONTROLS PANEL -->
@@ -333,24 +416,6 @@
       <div class="a-section-title">Selected Hex</div>
       <div class="a-section-stripe" style="background:var(--primary)"></div>
       <div id="selectedEditor"><span class="a-muted">Click a hex to select it.</span></div>
-    </div>
-
-    <hr class="a-section-divider" />
-
-    <!-- Data -->
-    <div>
-      <div class="a-section-title">Data</div>
-      <div class="a-section-stripe" style="background:var(--secondary)"></div>
-      <label class="a-label" for="slugInput">Composite slug</label>
-      <input id="slugInput" type="text" placeholder="e.g. student-advisory-board" style="margin-bottom:0.75rem" />
-      <div class="a-btn-row">
-        <label class="a-btn" style="cursor:pointer;">
-          <input id="importJSON" type="file" accept="application/json" style="display:none" />
-          Import JSON
-        </label>
-        <button id="btnExportJSON" class="a-btn">Export JSON</button>
-        <button id="btnExportCSV" class="a-btn">Export to CEnTR*CANON</button>
-      </div>
     </div>
 
     <hr class="a-section-divider" />
@@ -761,35 +826,184 @@ function dl(blob, name) {
   a.href = url; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
-document.getElementById('btnExportJSON').addEventListener('click', () => {
-  dl(new Blob([JSON.stringify(hexes, null, 2)], { type: 'application/json' }), 'apiary.json');
-});
-document.getElementById('btnExportCSV').addEventListener('click', () => {
-  const rawSlug = document.getElementById('slugInput').value.trim();
-  const sanitized = rawSlug.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9._-]/g, '');
-  const slug = sanitized || 'apiary';
-  const date = new Date().toISOString().slice(0, 10);
-  const pairs = getAdjacent();
-  const lines = ['from,to'];
-  pairs.forEach(([a, b]) => {
+// Deterministic, non-cryptographic hash → short stable id for a contributor label.
+function hashId(str) {
+  const s = String(str || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return 'c' + (h >>> 0).toString(36);
+}
+// Filename-safe slug: lowercase, whitespace runs → underscore, strip anything else unsafe.
+function slugify(label) {
+  const s = String(label || '').trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9._-]/g, '');
+  return s || 'apiary';
+}
+function getContributorLabel() {
+  return document.getElementById('contributorLabelInput').value.trim();
+}
+// Adjacent, labeled, non-self-loop hex pairs as {from,to} — the shared edge source
+// for both the CSV export and the .bee save.
+function adjacentTermPairs() {
+  const pairs = [];
+  getAdjacent().forEach(([a, b]) => {
     const from = (hexes.find(h => h.id === a)?.text || '').trim();
     const to   = (hexes.find(h => h.id === b)?.text || '').trim();
     if (!from || !to || from === to) return;
-    lines.push(`${csvField(from)},${csvField(to)}`);
+    pairs.push({ from, to });
   });
-  if (lines.length === 1) { alert('No adjacent labeled pairs to export.'); return; }
+  return pairs;
+}
+
+document.getElementById('btnExportCSV').addEventListener('click', () => {
+  const slug = slugify(getContributorLabel());
+  const date = new Date().toISOString().slice(0, 10);
+  const pairs = adjacentTermPairs();
+  if (pairs.length === 0) { alert('No adjacent labeled pairs to export.'); return; }
+  const lines = ['from,to', ...pairs.map(p => `${csvField(p.from)},${csvField(p.to)}`)];
   dl(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `${slug}_${date}.csv`);
 });
-document.getElementById('importJSON').addEventListener('change', e => {
+
+document.getElementById('btnSave').addEventListener('click', () => {
+  const label = getContributorLabel();
+  const pairs = adjacentTermPairs();
+  if (pairs.length === 0) { alert('No adjacent labeled pairs to save.'); return; }
+  const bee = {
+    version: '1.0',
+    contributor: { label, id: hashId(label) },
+    edges: pairs,
+  };
+  dl(new Blob([JSON.stringify(bee, null, 2)], { type: 'application/json' }), `${slugify(label)}.bee`);
+});
+
+// Rebuild a hex canvas from a .bee file's edges. Positions aren't part of the
+// .bee spec, so hexes are re-laid-out on the same hex grid used by snap-to-grid.
+// A cell is only ever given to a term if every already-placed grid-neighbor of
+// that cell is a real graph-neighbor of the term — that's what guarantees this
+// never fabricates an adjacency that wasn't in the file. The tradeoff is
+// completeness, not correctness: a term connected to more than 6 others, or
+// part of a tight cluster/triangle, may not show every one of its edges as
+// touching once reloaded, but nothing touches that shouldn't. Terms with no
+// edge at all can't be represented — the .bee format only carries edges.
+function loadBeeData(data) {
+  const edgesRaw = Array.isArray(data && data.edges) ? data.edges : [];
+  const adj = new Map();
+  function ensureTerm(t) { if (!adj.has(t)) adj.set(t, new Set()); }
+  edgesRaw.forEach(e => {
+    const from = String((e && e.from) || '').trim();
+    const to   = String((e && e.to)   || '').trim();
+    if (!from || !to || from === to) return;
+    ensureTerm(from); ensureTerm(to);
+    adj.get(from).add(to);
+    adj.get(to).add(from);
+  });
+  const terms = Array.from(adj.keys());
+  if (terms.length === 0) { alert('No usable edges found in that .bee file.'); return; }
+  terms.sort((a, b) => adj.get(b).size - adj.get(a).size);
+
+  const mod2 = n => ((n % 2) + 2) % 2; // JS % keeps the sign of negative rows — this doesn't
+  const occupied = new Map();
+  const posOf = new Map();
+  const key = (row, col) => `${row},${col}`;
+  function neighborCells(row, col) {
+    const deltas = (mod2(row) === 1)
+      ? [[0,-1],[0,1],[-1,0],[-1,1],[1,0],[1,1]]
+      : [[0,-1],[0,1],[-1,-1],[-1,0],[1,-1],[1,0]];
+    return deltas.map(([dr, dc]) => [row + dr, col + dc]);
+  }
+  function isValidFor(term, row, col) {
+    if (occupied.has(key(row, col))) return false;
+    for (const [nr, nc] of neighborCells(row, col)) {
+      const other = occupied.get(key(nr, nc));
+      if (other !== undefined && !adj.get(term).has(other)) return false;
+    }
+    return true;
+  }
+  function scanRing(centerRow, centerCol, radius, isFree) {
+    if (radius === 0) return isFree(centerRow, centerCol) ? [centerRow, centerCol] : null;
+    for (let dc = -radius; dc <= radius; dc++) {
+      if (isFree(centerRow - radius, centerCol + dc)) return [centerRow - radius, centerCol + dc];
+      if (isFree(centerRow + radius, centerCol + dc)) return [centerRow + radius, centerCol + dc];
+    }
+    for (let dr = -radius + 1; dr <= radius - 1; dr++) {
+      if (isFree(centerRow + dr, centerCol - radius)) return [centerRow + dr, centerCol - radius];
+      if (isFree(centerRow + dr, centerCol + radius)) return [centerRow + dr, centerCol + radius];
+    }
+    return null;
+  }
+  function findValidCell(term, row, col) {
+    const isFree = (r, c) => isValidFor(term, r, c);
+    for (let radius = 0; radius < 500; radius++) {
+      const found = scanRing(row, col, radius, isFree);
+      if (found) return found;
+    }
+    return [row, col + 9999];
+  }
+  function findValidNear(term, row, col) {
+    for (const [nr, nc] of neighborCells(row, col)) {
+      if (isValidFor(term, nr, nc)) return [nr, nc];
+    }
+    return findValidCell(term, row, col);
+  }
+  function place(term, row, col) {
+    occupied.set(key(row, col), term);
+    posOf.set(term, [row, col]);
+  }
+
+  const visited = new Set();
+  terms.forEach(startTerm => {
+    if (visited.has(startTerm)) return;
+    const [r0, c0] = findValidCell(startTerm, 0, 0);
+    place(startTerm, r0, c0);
+    visited.add(startTerm);
+    const queue = [startTerm];
+    while (queue.length) {
+      const cur = queue.shift();
+      const [row, col] = posOf.get(cur);
+      const neighbors = Array.from(adj.get(cur)).sort((a, b) => adj.get(b).size - adj.get(a).size);
+      neighbors.forEach(nb => {
+        if (visited.has(nb)) return;
+        const [nr, nc] = findValidNear(nb, row, col);
+        place(nb, nr, nc);
+        visited.add(nb);
+        queue.push(nb);
+      });
+    }
+  });
+
+  // Shift everything so the smallest row/col is ~0 — keeps the reconstruction
+  // anchored near the canvas origin instead of drifting negative. The row
+  // shift must itself be even, or it flips every row's parity and silently
+  // changes which rows get the +colW/2 offset, breaking the adjacency the
+  // placement above just validated.
+  let minRow = Infinity, minCol = Infinity;
+  posOf.forEach(([row, col]) => { minRow = Math.min(minRow, row); minCol = Math.min(minCol, col); });
+  const rowShift = mod2(minRow) === 1 ? minRow - 1 : minRow;
+
+  const r = hexSize, colW = r * Math.sqrt(3), rowH = r * 1.5;
+  const built = terms.map((term, i) => {
+    const [row, col] = posOf.get(term);
+    const shiftedRow = row - rowShift, shiftedCol = col - minCol;
+    const x = shiftedCol * colW + (mod2(shiftedRow) === 1 ? colW / 2 : 0);
+    const y = shiftedRow * rowH;
+    return { id: i + 1, text: term, color: PALETTE[i % PALETTE.length], x, y, size: hexSize };
+  });
+
+  hexes = built;
+  nextId = built.length + 1;
+  selectedId = null;
+  const label = (data.contributor && data.contributor.label) || '';
+  if (label) document.getElementById('contributorLabelInput').value = label;
+  render();
+}
+
+document.getElementById('loadFile').addEventListener('change', e => {
   const file = e.target.files[0]; if (!file) return;
   const reader = new FileReader();
   reader.onload = ev => {
     try {
       const data = JSON.parse(ev.target.result);
-      if (Array.isArray(data)) {
-        hexes = data; nextId = Math.max(0, ...hexes.map(h => h.id)) + 1; selectedId = null; render();
-      }
-    } catch(err) { alert('Invalid JSON'); }
+      loadBeeData(data);
+    } catch (err) { alert('Invalid .bee file: ' + err.message); }
   };
   reader.readAsText(file); e.target.value = '';
 });
