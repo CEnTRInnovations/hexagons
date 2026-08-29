@@ -133,9 +133,12 @@ condition is logged in the concordance manifest and surfaced as a
 non-blocking advisory in the UI alongside `NO WEIGHT` if both apply.
 
 **Gate effect:** None — does not block progression.
-**Apiary implication:** If Apiary does not yet collect polarity data, omitting
-the `polarity` column entirely is preferred. `NO POLARITY` is an acceptable
-and expected file state for most v1 deployments.
+**Apiary implication:** Apiary collects polarity per edge as an *optional*
+`+` / `–` classification. When a contributor classifies at least one edge,
+the `polarity` column is emitted with `1` / `-1` for those edges and empty
+for the rest (empty → imputed `1`, per §3.4). When no edge is classified,
+the column is omitted entirely and the file is `NO POLARITY` — still an
+acceptable and expected state.
 
 ---
 
@@ -301,10 +304,10 @@ Key differences from the CSV contract:
   the CSV format deliberately leaves contributor metadata out of the file
   (§9). `id` is a short, deterministic hash of the label (Apiary's
   `hashId()`), stable across repeated saves of the same label.
-- `weight`/`effect` (the `.bee` equivalents of `weight`/`polarity`) are
-  omitted per edge, for the same reason `weight`/`polarity` are omitted from
-  the CSV (§3.3, §3.4) — Apiary doesn't collect either yet. Both default to
-  `1` on ingest.
+- `weight` is omitted per edge — Apiary doesn't collect it (defaults to `1`
+  on ingest). `effect` (the `.bee` equivalent of CSV `polarity`) is written
+  only on edges the contributor classified `+` / `–` (`1` / `-1`); unclassified
+  edges omit it and it defaults to `1` on ingest.
 - Same edge source and edge rules (§6) as the CSV: touching, labeled,
   non-self-loop hex pairs. Isolated hexes are excluded from both formats
   equally.
