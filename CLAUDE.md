@@ -59,7 +59,9 @@ Each hexagon is a plain JavaScript object stored in the `hexes` array:
 }
 ```
 
-Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `showGrid`, `newColor`, `dragging`.
+Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `showGrid`, `newColor`, `dragging`, `edgePolarity`.
+
+`edgePolarity` is a plain object `{ [edgeKey]: 1 | -1 }` — optional per-edge polarity classifications (`+` / `–`). Keyed on the sorted, lowercased term-label pair (via `edgeKey(a, b)`), **not** hex ids, so classifications survive a Save→Load round-trip. An absent key means the edge is unclassified.
 
 ---
 
@@ -83,8 +85,9 @@ Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `show
 | `hashId(str)` | Deterministic, non-cryptographic hash → short stable id string for a contributor label |
 | `slugify(label)` | Filename-safe slug: lowercase, whitespace → `_`, strips other unsafe characters |
 | `getContributorLabel()` | Reads the trimmed value of the Group field |
-| `adjacentTermPairs()` | Shared edge source for both Export csv and Save — labeled, non-self-loop adjacent hex pairs as `{from, to}` |
-| `loadBeeData(data)` | Rebuilds the hex canvas from a parsed `.bee` file's `edges` (see Import / Export) |
+| `adjacentTermPairs()` | Shared edge source for both Export csv and Save — labeled, non-self-loop adjacent hex pairs as `{from, to}`, plus `polarity: 1 \| -1` when the edge is classified |
+| `edgeKey(a, b)` | Sorted, lowercased, NUL-joined term-label pair → the stable key used for `edgePolarity` |
+| `loadBeeData(data)` | Rebuilds the hex canvas from a parsed `.bee` file's `edges`, and repopulates `edgePolarity` from any per-edge `effect` values (see Import / Export) |
 
 ---
 
@@ -98,17 +101,20 @@ Free-text field (`#contributorLabelInput`, placeholder `e.g. Group A`), spaces a
 - `slugify(label)` — lowercased, whitespace collapsed to `_`, unsafe characters stripped — used in both export filenames.
 
 ### Save
-Writes a `.bee` JSON file: `{ version, contributor: { label, id }, edges: [{ from, to }] }`, matching the interchange spec Apiary Hive consumes (`bee-file-spec.json`, in the `apiary-hive` repo). `weight`/`effect` are omitted from each edge — Apiary doesn't collect either yet, and the spec defaults both to `1` on ingest, same rationale as `NO WEIGHT`/`NO POLARITY` below. Edges come from `adjacentTermPairs()`. Filename: `{slug}.bee` (no date — a stable working-file name, unlike the dated CSV).
+Writes a `.bee` JSON file: `{ version, contributor: { label, id }, edges: [{ from, to }] }`, matching the interchange spec Apiary Hive consumes (`bee-file-spec.json`, in the `apiary-hive` repo). A classified edge also carries `effect: 1 | -1`; unclassified edges omit `effect` entirely (the spec defaults it to `1` on ingest, same rationale as `NO WEIGHT`/`NO POLARITY` below). `weight` is always omitted — Apiary doesn't collect it. Edges come from `adjacentTermPairs()`. Filename: `{slug}.bee` (no date — a stable working-file name, unlike the dated CSV).
 
 ### Load
 Reads a `.bee` file and rebuilds the canvas from its `edges`. Positions aren't part of the `.bee` spec, so `loadBeeData()` re-lays-out the terms on the same hex grid used by snap-to-grid: it walks the edge graph and seats each term in a free grid cell next to an already-placed neighbor. The placement is constrained so it will **never seat two unrelated terms as grid-neighbors** — a cell is only valid for a term if every already-occupied grid-neighbor of that cell is a real graph-neighbor of that term. This is deliberately a correctness-over-completeness tradeoff:
 - **Never fabricates an adjacency.** Verified by round-tripping synthetic graphs (dense random graphs, disconnected components, triangles, high-degree hubs) through the actual code and diffing expected vs. reconstructed edges — zero false positives across all cases tested.
 - **May not show every true edge as touching.** A term connected to more than 6 others (the hex grid's physical neighbor limit) or part of a tightly-closed cluster (e.g. a triangle) may end up with some of its edges not visually adjacent after reload, even though the relationship still existed in the source file.
 - **Terms with no edge at all can't round-trip.** The `.bee` format only carries the edge list, not isolated nodes — a hex with zero adjacent neighbors is dropped by Save and can never be restored by Load. This mirrors the CSV export's existing isolated-node behavior (see Edge Rules below), now extended to Save/Load too.
-- On success, also restores `contributor.label` into the Group field.
+- On success, also restores `contributor.label` into the Group field, and repopulates `edgePolarity` from any per-edge `effect` values in the file (matched back to the reconstructed hexes by term label).
 
 ### Export csv
-Downloads an **edge list** — `from,to` columns, RFC 4180 quoted, built from `adjacentTermPairs()` — matching the CEnTR\*CANON ingestion contract in `docs/apiary-output-specification.md`. `weight`/`polarity` are omitted (produces the acceptable `NO WEIGHT` + `NO POLARITY` file state). Filename: `{slug}_{YYYY-MM-DD}.csv` (dated — a point-in-time deliverable, unlike Save).
+Downloads an **edge list** — `from,to` columns, RFC 4180 quoted, built from `adjacentTermPairs()` — matching the CEnTR\*CANON ingestion contract in `docs/apiary-output-specification.md`. If **any** edge is classified, a `polarity` column is added (`1` / `-1` for classified rows, empty for the rest); if none are, the column is omitted entirely (the acceptable `NO POLARITY` state). `weight` is always omitted (`NO WEIGHT`). Filename: `{slug}_{YYYY-MM-DD}.csv` (dated — a point-in-time deliverable, unlike Save).
+
+### Edge polarity classification
+Hovering (or clicking) the dot at the midpoint of any edge between two **labeled** hexes opens a small popup with `+` / `–` / `clear`. `+` stores `1`, `–` stores `-1`, `clear` removes the classification. Classified edges render a colored badge at the midpoint (green `--secondary` for `+`, plum `--serve` for `–`) in the `#edgeBadges` overlay group, which sits above `#hexes` so the badge stays visible even though the edge line itself is hidden under the two touching hexes. Unclassified edges show a faint grey dot as the affordance. Only `+` / `–` are offered — an explicit neutral (`0`) is not yet exposed; unclassified and neutral both currently export as "not characterized".
 
 ---
 
@@ -135,7 +141,7 @@ Two-column responsive grid (CSS Grid): a 280px control panel on the left and the
 ## Extending the App
 
 - **Add a `weight` UI**: A range input or numeric field on the Selected Hex editor, stored as `h.weight` on the hex object. `adjacentTermPairs()`/the `.bee` export could then read edge weight from the average of the two adjacent hexes' weights, or from a separate edge data structure.
-- **Add a `polarity` selector**: A three-state toggle (`-1` / `0` / `1`) per adjacency pair, requiring an edge data structure keyed on `[idA, idB]` pairs. Would populate `effect` in the `.bee` export and `polarity` in the CSV, moving both out of their current `NO WEIGHT`/`NO POLARITY`-equivalent states.
+- **Expose the neutral polarity state (`0`)**: `edgePolarity` and both exports already carry signed values; add a middle button to the edge popup and let the badge/CSV/`.bee` represent `0` distinctly from unclassified. The spec permits `0` (neutral / ambiguous).
 - **Multi-session load**: Allow loading a second `.bee` file to overlay a second contributor's map for comparison, rather than Load always replacing the canvas outright.
 - **Session-lossless save (optional, non-spec)**: Save/Load are edge-based by design (see Import / Export), so isolated hexes and exact positions/colors don't round-trip. If that's ever a problem in practice, the `.bee` format's `additionalProperties: true` would allow a non-standard extra field (e.g. `hexes`) carrying the full canvas snapshot alongside the standard `edges`, without breaking spec compliance for downstream consumers that only read `edges`/`contributor`.
 

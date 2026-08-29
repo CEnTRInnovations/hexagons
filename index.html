@@ -338,6 +338,35 @@
       min-width: 36px;
     }
     .a-selected-row input[type="text"] { flex: 1; }
+
+    /* ── EDGE POLARITY POPUP ── */
+    .a-edge-pop {
+      position: fixed;
+      z-index: 50;
+      display: none;
+      gap: 3px;
+      padding: 3px;
+      background: var(--bg-light);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      box-shadow: var(--shadow);
+      transform: translate(-50%, -50%);
+    }
+    .a-edge-pop.is-open { display: flex; }
+    .a-edge-pop button {
+      font-family: "Alegreya Sans", sans-serif;
+      font-size: 0.8rem;
+      line-height: 1;
+      padding: 4px 7px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: var(--bg-main);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .a-edge-pop button:hover { filter: brightness(0.95); }
+    .a-edge-pop button[data-pol="1"]  { background: var(--secondary); color: #fff; border-color: var(--secondary); }
+    .a-edge-pop button[data-pol="-1"] { background: var(--serve); color: #fff; border-color: var(--serve); }
   </style>
 </head>
 <body>
@@ -440,9 +469,15 @@
         <g id="grid"></g>
         <g id="edges"></g>
         <g id="hexes"></g>
+        <g id="edgeBadges"></g>
       </svg>
     </div>
-    <div class="a-hint">Click to add · Drag to move · Del to remove</div>
+    <div class="a-hint">Click to add · Drag to move · Del to remove · Hover an edge to mark + / –</div>
+    <div id="edgePop" class="a-edge-pop">
+      <button type="button" data-pol="1">+</button>
+      <button type="button" data-pol="-1">–</button>
+      <button type="button" data-pol="0">clear</button>
+    </div>
   </div>
 
 </div>
@@ -459,12 +494,20 @@ let snapToGrid = true;
 let showGrid = false;
 let newColor = PALETTE[0];
 let dragging = null;
+// Edge polarity: { [edgeKey]: 1 | -1 }. Keyed on the sorted term-label pair (not
+// hex ids, which don't survive a Load) so classifications round-trip through
+// Save/Load and match how .bee/CSV identify edges. Absent key = unclassified.
+let edgePolarity = {};
+function edgeKey(labelA, labelB) {
+  return [labelA, labelB].map(s => String(s || '').trim().toLowerCase()).sort().join(' ');
+}
 
 // ─── SVG helpers ──────────────────────────────────────────────────────────────
 const svg   = document.getElementById('canvas');
 const gGrid = document.getElementById('grid');
 const gEdge = document.getElementById('edges');
 const gHex  = document.getElementById('hexes');
+const gBadge = document.getElementById('edgeBadges');
 
 function hexPoints(cx, cy, r) {
   const pts = [];
@@ -569,16 +612,77 @@ function renderAdjacency() {
 
   // edges
   gEdge.innerHTML = '';
+  gBadge.innerHTML = '';
   pairs.forEach(([a, b]) => {
     const ha = hexes.find(h => h.id === a);
     const hb = hexes.find(h => h.id === b);
     if (!ha || !hb) return;
-    gEdge.appendChild(svgEl('line', {
+    const la = (ha.text || '').trim();
+    const lb = (hb.text || '').trim();
+    const classifiable = la && lb && la.toLowerCase() !== lb.toLowerCase();
+    const pol = classifiable ? edgePolarity[edgeKey(la, lb)] : undefined;
+    const color = pol === 1 ? 'var(--secondary)' : pol === -1 ? 'var(--serve)' : 'rgba(62,59,53,0.20)';
+
+    const line = svgEl('line', {
       x1: ha.x, y1: ha.y, x2: hb.x, y2: hb.y,
-      stroke: 'rgba(62,59,53,0.20)', 'stroke-width': 1.5, 'stroke-dasharray': '4 3'
-    }));
+      stroke: color, 'stroke-width': pol ? 2.5 : 1.5
+    });
+    if (!pol) line.setAttribute('stroke-dasharray', '4 3');
+    gEdge.appendChild(line);
+
+    if (!classifiable) return;
+
+    // Interactive badge at the edge midpoint, in the overlay group above #hexes —
+    // the line itself sits under the two (touching) hexes and can't be hovered.
+    const mx = (ha.x + hb.x) / 2, my = (ha.y + hb.y) / 2;
+    const dot = svgEl('circle', {
+      cx: mx, cy: my, r: pol ? 11 : 7,
+      fill: pol ? color : 'rgba(62,59,53,0.28)',
+      stroke: 'var(--bg-main)', 'stroke-width': 2
+    });
+    dot.style.cursor = 'pointer';
+    dot.addEventListener('mouseenter', ev => openEdgePop(ev, la, lb));
+    dot.addEventListener('mouseleave', scheduleEdgePopClose);
+    dot.addEventListener('click', ev => { ev.stopPropagation(); openEdgePop(ev, la, lb); });
+    gBadge.appendChild(dot);
+    if (pol) {
+      const t = svgEl('text', {
+        x: mx, y: my, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+        'font-size': 16, 'font-weight': 700, fill: '#fff', 'pointer-events': 'none'
+      });
+      t.textContent = pol === 1 ? '+' : '–';
+      gBadge.appendChild(t);
+    }
   });
 }
+
+// ─── Edge polarity popup ──────────────────────────────────────────────────────
+const edgePop = document.getElementById('edgePop');
+let edgePopCloseTimer = null;
+let edgePopTarget = null; // { la, lb }
+function openEdgePop(ev, la, lb) {
+  clearTimeout(edgePopCloseTimer);
+  edgePopTarget = { la, lb };
+  edgePop.style.left = ev.clientX + 'px';
+  edgePop.style.top = ev.clientY + 'px';
+  edgePop.classList.add('is-open');
+}
+function scheduleEdgePopClose() {
+  clearTimeout(edgePopCloseTimer);
+  edgePopCloseTimer = setTimeout(() => edgePop.classList.remove('is-open'), 150);
+}
+edgePop.addEventListener('mouseenter', () => clearTimeout(edgePopCloseTimer));
+edgePop.addEventListener('mouseleave', scheduleEdgePopClose);
+edgePop.querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (!edgePopTarget) return;
+    const k = edgeKey(edgePopTarget.la, edgePopTarget.lb);
+    const v = parseInt(btn.dataset.pol, 10);
+    if (v === 1 || v === -1) edgePolarity[k] = v; else delete edgePolarity[k];
+    edgePop.classList.remove('is-open');
+    render();
+  });
+});
 
 // ─── Text wrap ────────────────────────────────────────────────────────────────
 function wrapText(text, maxChars) {
@@ -850,7 +954,10 @@ function adjacentTermPairs() {
     const from = (hexes.find(h => h.id === a)?.text || '').trim();
     const to   = (hexes.find(h => h.id === b)?.text || '').trim();
     if (!from || !to || from === to) return;
-    pairs.push({ from, to });
+    const pair = { from, to };
+    const pol = edgePolarity[edgeKey(from, to)];
+    if (pol === 1 || pol === -1) pair.polarity = pol;
+    pairs.push(pair);
   });
   return pairs;
 }
@@ -860,7 +967,12 @@ document.getElementById('btnExportCSV').addEventListener('click', () => {
   const date = new Date().toISOString().slice(0, 10);
   const pairs = adjacentTermPairs();
   if (pairs.length === 0) { alert('No adjacent labeled pairs to export.'); return; }
-  const lines = ['from,to', ...pairs.map(p => `${csvField(p.from)},${csvField(p.to)}`)];
+  const withPol = pairs.some(p => p.polarity === 1 || p.polarity === -1);
+  const header = withPol ? 'from,to,polarity' : 'from,to';
+  const lines = [header, ...pairs.map(p => {
+    const base = `${csvField(p.from)},${csvField(p.to)}`;
+    return withPol ? `${base},${p.polarity === 1 || p.polarity === -1 ? p.polarity : ''}` : base;
+  })];
   dl(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `${slug}_${date}.csv`);
 });
 
@@ -871,7 +983,11 @@ document.getElementById('btnSave').addEventListener('click', () => {
   const bee = {
     version: '1.0',
     contributor: { label, id: hashId(label) },
-    edges: pairs,
+    edges: pairs.map(p => {
+      const e = { from: p.from, to: p.to };
+      if (p.polarity === 1 || p.polarity === -1) e.effect = p.polarity;
+      return e;
+    }),
   };
   dl(new Blob([JSON.stringify(bee, null, 2)], { type: 'application/json' }), `${slugify(label)}.bee`);
 });
@@ -887,6 +1003,12 @@ document.getElementById('btnSave').addEventListener('click', () => {
 // edge at all can't be represented — the .bee format only carries edges.
 function loadBeeData(data) {
   const edgesRaw = Array.isArray(data && data.edges) ? data.edges : [];
+  edgePolarity = {};
+  edgesRaw.forEach(e => {
+    const f = String((e && e.from) || '').trim();
+    const t = String((e && e.to) || '').trim();
+    if (f && t && (e.effect === 1 || e.effect === -1)) edgePolarity[edgeKey(f, t)] = e.effect;
+  });
   const adj = new Map();
   function ensureTerm(t) { if (!adj.has(t)) adj.set(t, new Set()); }
   edgesRaw.forEach(e => {
@@ -1008,6 +1130,32 @@ document.getElementById('loadFile').addEventListener('change', e => {
   };
   reader.readAsText(file); e.target.value = '';
 });
+
+// ─── Self-check (open with #test) ─────────────────────────────────────────────
+function demo() {
+  const ok = (c, m) => { if (!c) throw new Error('demo: ' + m); };
+  ok(edgeKey('A', 'b') === edgeKey('B', 'a'), 'edgeKey is order/case-independent');
+  ok(edgeKey('a b', 'c') !== edgeKey('a', 'b c'), 'edgeKey separator is collision-safe');
+
+  const savedHexes = hexes, savedPol = edgePolarity;
+  hexes = [
+    { id: 1, text: 'alpha', x: 0, y: 0, size: 60 },
+    { id: 2, text: 'beta',  x: 90, y: 0, size: 60 },
+    { id: 3, text: 'gamma', x: 180, y: 0, size: 60 },
+  ];
+  edgePolarity = { [edgeKey('alpha', 'beta')]: 1 };
+  const pairs = adjacentTermPairs();
+  ok(pairs.find(p => p.from === 'alpha' && p.to === 'beta').polarity === 1, 'classified pair carries polarity');
+  ok(!('polarity' in pairs.find(p => p.to === 'gamma' || p.from === 'gamma')), 'unclassified pair omits polarity');
+
+  loadBeeData({ edges: [{ from: 'alpha', to: 'beta', effect: -1 }, { from: 'beta', to: 'gamma' }] });
+  ok(edgePolarity[edgeKey('alpha', 'beta')] === -1, '.bee effect round-trips through loadBeeData');
+  ok(edgePolarity[edgeKey('beta', 'gamma')] === undefined, 'edge without effect stays unclassified');
+
+  hexes = savedHexes; edgePolarity = savedPol;
+  console.log('demo: all checks passed');
+}
+if (location.hash === '#test') demo();
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 buildNewColorSwatches();
