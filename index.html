@@ -256,6 +256,15 @@
     .a-swatch:hover { transform: scale(1.12); }
     .a-swatch.active { border-color: var(--text); box-shadow: 0 0 0 1px var(--bg-main); }
 
+    /* ── ICON SUGGESTIONS (idon) ── */
+    .a-icon-suggestions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0.25rem 0 0.75rem; min-height: 28px; }
+    .a-icon-suggestions .material-symbols-outlined { font-size: 22px; padding: 3px; border-radius: 6px; cursor: pointer; color: var(--text); background: var(--bg-main); border: 1px solid transparent; }
+    .a-icon-suggestions .material-symbols-outlined:hover { border-color: var(--primary); }
+    .a-icon-suggestions .material-symbols-outlined.active { border-color: var(--primary); background: var(--bg-mid); }
+    .a-icon-suggestions .a-icon-clear { cursor: pointer; font-size: 18px; color: var(--serve); }
+    .a-icon-suggestions .a-muted { font-size: 0.85rem; color: var(--text); opacity: 0.6; }
+    .a-icon-suggest-btn { font: inherit; font-size: 0.8rem; padding: 2px 8px; border: 1px solid var(--primary); background: var(--bg-main); color: var(--primary); border-radius: 6px; cursor: pointer; }
+
     /* ── RANGE ROW ── */
     .a-range-row { display: flex; align-items: center; gap: 0.5rem; }
     .a-range-val {
@@ -663,6 +672,13 @@ function render() {
   renderSelectedEditor();
 }
 
+function renderCanvasOnly() {
+  gHex.innerHTML = '';
+  hexes.forEach(h => gHex.appendChild(renderHex(h)));
+  renderGrid();
+  renderAdjacency();
+}
+
 // ─── Selected editor ──────────────────────────────────────────────────────────
 function renderSelectedEditor() {
   const div = document.getElementById('selectedEditor');
@@ -679,9 +695,87 @@ function renderSelectedEditor() {
   tLabel.textContent = 'Text';
   const tInput = document.createElement('input');
   tInput.type = 'text'; tInput.value = h.text; tInput.style.flex = '1';
-  tInput.addEventListener('input', () => { h.text = tInput.value; render(); });
+  tInput.addEventListener('input', () => { h.text = tInput.value; renderCanvasOnly(); });
   textRow.appendChild(tLabel); textRow.appendChild(tInput);
   div.appendChild(textRow);
+
+  // ── Icon suggestions (idon) ──
+  const iconWrap = document.createElement('div');
+  iconWrap.className = 'a-icon-suggestions';
+  div.appendChild(iconWrap);
+
+  let iconReqToken = 0;
+  let iconRan = false; // has a suggest request completed for the current label?
+
+  function paintIcons(list) {
+    iconWrap.innerHTML = '';
+    if (iconEngineState === 'loading') {
+      const s = document.createElement('span');
+      s.className = 'a-muted'; s.textContent = 'loading suggestions…';
+      iconWrap.appendChild(s); return;
+    }
+    if (iconEngineState === 'failed') {
+      const s = document.createElement('span');
+      s.className = 'a-muted'; s.textContent = 'icon suggestions unavailable';
+      iconWrap.appendChild(s); return;
+    }
+    if (h.icon) {
+      const cur = document.createElement('span');
+      cur.className = 'material-symbols-outlined active';
+      cur.textContent = h.icon; cur.title = h.icon;
+      iconWrap.appendChild(cur);
+    }
+    (list || []).forEach(name => {
+      if (name === h.icon) return;
+      const g = document.createElement('span');
+      g.className = 'material-symbols-outlined';
+      g.textContent = name; g.title = name;
+      g.addEventListener('click', () => { h.icon = name; render(); });
+      iconWrap.appendChild(g);
+    });
+    if (h.icon) {
+      const x = document.createElement('span');
+      x.className = 'material-symbols-outlined a-icon-clear';
+      x.textContent = 'close'; x.title = 'Remove icon';
+      x.addEventListener('click', () => { delete h.icon; render(); });
+      iconWrap.appendChild(x);
+    }
+    if (!list || !list.length) {
+      if (iconRan && Array.isArray(list) && h.text.trim() && iconEngineState === 'ready') {
+        const s = document.createElement('span');
+        s.className = 'a-muted'; s.textContent = 'no strong match';
+        iconWrap.appendChild(s);
+      } else {
+        const b = document.createElement('button');
+        b.className = 'a-icon-suggest-btn';
+        b.textContent = h.icon ? 'Suggest another' : 'Suggest icon';
+        b.addEventListener('click', () => runIconSuggest());
+        iconWrap.appendChild(b);
+      }
+    }
+  }
+
+  async function runIconSuggest() {
+    const token = ++iconReqToken;
+    const label = h.text;
+    iconRan = false;
+    paintIcons(null);
+    const list = await suggestIcons(label);
+    if (token !== iconReqToken || selectedId !== h.id || h.text !== label) return;
+    iconRan = true;
+    paintIcons(list);
+  }
+
+  onIconEngineChange(() => { if (selectedId === h.id) paintIcons(null); });
+  paintIcons(null);
+
+  // debounce label edits → refresh suggestions once the engine has been used
+  tInput.addEventListener('input', () => {
+    clearTimeout(tInput._iconTimer);
+    tInput._iconTimer = setTimeout(() => {
+      if (iconEngineState === 'ready') runIconSuggest();
+    }, 400);
+  });
 
   const cLabel = document.createElement('div');
   cLabel.className = 'a-label'; cLabel.textContent = 'Color';
@@ -1076,6 +1170,7 @@ async function suggestIcons(label) {
       best.sort((a, b) => a[0] - b[0]);
     }
   }
+  if (best.length && best[best.length - 1][0] < ICON_SCORE_FLOOR) return [];
   return best.sort((a, b) => b[0] - a[0]).map(([, r]) => e.names[r]);
 }
 
