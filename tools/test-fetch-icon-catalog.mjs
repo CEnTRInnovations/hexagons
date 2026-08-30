@@ -21,6 +21,7 @@ test('buildCatalog drops icons with both logo+brand tags, keeps meaningful ones'
   assert.equal(names.length, docs.length);
   const i = names.indexOf('delete');
   assert.match(docs[i], /trash|garbage|bin/);
+  assert.match(docs[i], /^delete\. delete\. delete\./, 'humanized name is repeated up front');
   // sorted, unique
   assert.deepEqual(names, [...names].sort());
   assert.equal(new Set(names).size, names.length);

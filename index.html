@@ -1238,7 +1238,7 @@ document.getElementById('loadFile').addEventListener('change', e => {
 });
 
 // ─── Idon icon suggestions (experimental, lazy-loaded) ────────────────────────
-const ICON_SCORE_FLOOR = 0.2;
+const ICON_SCORE_FLOOR = 0.3; // ponytail: cosine floor, tune via iconDemo() if matches feel too loose/tight
 let iconEngineState = 'idle';
 let _iconEngineCb = null;
 function onIconEngineChange(cb) { _iconEngineCb = cb; }
@@ -1302,8 +1302,12 @@ async function suggestIcons(label) {
       best.sort((a, b) => a[0] - b[0]);
     }
   }
-  if (best.length && best[best.length - 1][0] < ICON_SCORE_FLOOR) return [];
-  return best.sort((a, b) => b[0] - a[0]).map(([, r]) => e.names[r]);
+  // Filter each hit against the floor (not just the weakest of the top-5) and
+  // cap at 3 — the trailing matches are almost always noise for short labels.
+  return best.sort((a, b) => b[0] - a[0])
+    .filter(([score]) => score >= ICON_SCORE_FLOOR)
+    .slice(0, 3)
+    .map(([, r]) => e.names[r]);
 }
 
 async function iconDemo() {
@@ -1312,9 +1316,11 @@ async function iconDemo() {
     ['team', /group|people|diversity/],
     ['warning', /warning|report|error|priority_high/],
     ['', null],
+    ['qwertyuiop asdfghjkl', null], // gibberish → nothing clears the floor
   ];
   for (const [label, re] of cases) {
     const got = await suggestIcons(label);
+    console.assert(got.length <= 3, `too many suggestions for ${label}: ${got.length}`);
     const ok = re ? got.some(n => re.test(n)) : got.length === 0;
     console[ok ? 'log' : 'error'](ok ? 'PASS' : 'FAIL', JSON.stringify(label), got);
     console.assert(ok, `iconDemo case failed: ${label}`);
