@@ -142,11 +142,11 @@ Flow:
    - debounce label `input` events ~400 ms → request suggestions
    - also a small **"Suggest"** button for on-demand re-run (covers hexes
      loaded from `.bee`, and manual retry)
-2. **First request:** `import()` the vendored `transformers.min.js`, construct
-   the feature-extraction pipeline (`quantized: true`, `device: 'webgpu'` with
-   WASM fallback), fetch + dequantise `icon-vectors.bin`. Show a one-time
-   "loading suggestions…" line in the panel. Cache everything on the
-   singleton; transformers.js Cache-API-caches the model across sessions.
+2. **First request:** `import()` transformers.js from the pinned jsDelivr URL,
+   construct the feature-extraction pipeline (`{ dtype: 'q8' }`), fetch +
+   dequantise `icon-vectors.bin`. Show a one-time "loading suggestions…" line
+   in the panel. Cache everything on the singleton; the browser HTTP cache
+   holds the CDN model/library across sessions.
 3. **Each request:** embed the label string → L2-normalise → dot product
    against the corpus matrix (plain loop, ≈ 1500 × 384 ≈ 0.6 M mults,
    sub-millisecond) → argsort → top 5 names.
