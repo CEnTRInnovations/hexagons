@@ -667,11 +667,12 @@ function renderAdjacency() {
     const lb = (hb.text || '').trim();
     const classifiable = la && lb && la.toLowerCase() !== lb.toLowerCase();
     const pol = classifiable ? edgeField(edgeKey(la, lb), 'polarity') : undefined;
+    const mag = classifiable ? edgeField(edgeKey(la, lb), 'magnitude') : undefined;
     const color = pol === 1 ? 'var(--secondary)' : pol === -1 ? 'var(--serve)' : 'rgba(62,59,53,0.20)';
 
     const line = svgEl('line', {
       x1: ha.x, y1: ha.y, x2: hb.x, y2: hb.y,
-      stroke: color, 'stroke-width': pol ? 2.5 : 1.5
+      stroke: color, 'stroke-width': mag ? (1.5 + mag) : (pol ? 2.5 : 1.5)
     });
     if (!pol) line.setAttribute('stroke-dasharray', '4 3');
     gEdge.appendChild(line);
@@ -698,6 +699,15 @@ function renderAdjacency() {
       });
       t.textContent = pol === 1 ? '+' : '–';
       gBadge.appendChild(t);
+    }
+    if (mag) {
+      const d = svgEl('text', {
+        x: mx + 12, y: my + 12, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+        'font-size': 12, 'font-weight': 700, fill: 'var(--text)', 'pointer-events': 'none',
+        'paint-order': 'stroke', stroke: 'var(--bg-main)', 'stroke-width': 3
+      });
+      d.textContent = String(mag);
+      gBadge.appendChild(d);
     }
   });
 }
@@ -1274,6 +1284,18 @@ function demo() {
      'popup shows exactly the enabled dimensions in order');
   document.getElementById('edgePop').classList.remove('is-open');
   [collectPolarity, collectMagnitude, collectDirection] = savedFlags3;
+
+  // Task 4: magnitude rendering
+  const savedHexes4 = hexes, savedData4 = edgeData, savedMag = collectMagnitude;
+  hexes = [{ id: 1, text: 'care', color: '#3B6B35', x: 0, y: 0, size: 60 }, { id: 2, text: 'power', color: '#3B6B35', x: 100, y: 0, size: 60 }];
+  edgeData = {}; collectMagnitude = true;
+  setEdgeField(edgeKey('care', 'power'), 'magnitude', 3);
+  render();
+  const line = document.getElementById('edges').querySelector('line');
+  ok(parseFloat(line.getAttribute('stroke-width')) === 4.5, 'magnitude 3 → stroke-width 4.5');
+  const digits = [...document.getElementById('edgeBadges').querySelectorAll('text')].map(t => t.textContent);
+  ok(digits.includes('3'), 'magnitude digit rendered in the badge overlay');
+  hexes = savedHexes4; edgeData = savedData4; collectMagnitude = savedMag; render();
 
   console.log('demo: all checks passed');
 }
