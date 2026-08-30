@@ -450,6 +450,28 @@
 
     <hr class="a-section-divider" />
 
+    <!-- Edge data -->
+    <div>
+      <div class="a-section-title">Edge Data</div>
+      <div class="a-section-stripe" style="background:var(--challenge)"></div>
+      <div style="display:flex; flex-direction:column; gap:0.4rem;">
+        <div class="a-toggle-row">
+          <span>Polarity (+ / –)</span>
+          <input id="collectPolarity" type="checkbox" />
+        </div>
+        <div class="a-toggle-row">
+          <span>Magnitude (1–3)</span>
+          <input id="collectMagnitude" type="checkbox" />
+        </div>
+        <div class="a-toggle-row">
+          <span>Direction (influence)</span>
+          <input id="collectDirection" type="checkbox" />
+        </div>
+      </div>
+    </div>
+
+    <hr class="a-section-divider" />
+
     <!-- Adjacency -->
     <div>
       <div class="a-section-title">Adjacency</div>
@@ -513,6 +535,10 @@ function setEdgeField(key, field, value) {
   }
   (edgeData[key] || (edgeData[key] = {}))[field] = value;
 }
+let collectPolarity  = false;
+let collectMagnitude = false;
+let collectDirection = false;
+function anyEdgeDimension() { return collectPolarity || collectMagnitude || collectDirection; }
 function edgeKey(labelA, labelB) {
   return [labelA, labelB].map(s => String(s || '').trim().toLowerCase()).sort().join(' ');
 }
@@ -645,7 +671,7 @@ function renderAdjacency() {
     if (!pol) line.setAttribute('stroke-dasharray', '4 3');
     gEdge.appendChild(line);
 
-    if (!classifiable) return;
+    if (!classifiable || !anyEdgeDimension()) return;
 
     // Interactive badge at the edge midpoint, in the overlay group above #hexes —
     // the line itself sits under the two (touching) hexes and can't be hovered.
@@ -850,6 +876,11 @@ sizeInput.addEventListener('input', () => {
 });
 document.getElementById('showGrid').addEventListener('change', e => { showGrid = e.target.checked; renderGrid(); });
 document.getElementById('snap').addEventListener('change', e => { snapToGrid = e.target.checked; });
+[['collectPolarity', v => collectPolarity = v],
+ ['collectMagnitude', v => collectMagnitude = v],
+ ['collectDirection', v => collectDirection = v]].forEach(([id, set]) => {
+  document.getElementById(id).addEventListener('change', e => { set(e.target.checked); render(); });
+});
 
 // ─── Canvas coords ────────────────────────────────────────────────────────────
 function svgCoords(e) {
@@ -1174,6 +1205,16 @@ function demo() {
   ok(edgeField(edgeKey('beta', 'gamma'), 'polarity') === undefined, 'edge without effect stays unclassified');
 
   hexes = savedHexes; edgeData = savedData;
+
+  // Task 2: parameters
+  const savedFlags = [collectPolarity, collectMagnitude, collectDirection];
+  ok(anyEdgeDimension() === (collectPolarity || collectMagnitude || collectDirection), 'anyEdgeDimension reflects the flags');
+  collectPolarity = collectMagnitude = collectDirection = false;
+  ok(anyEdgeDimension() === false, 'all dimensions off by default state');
+  collectMagnitude = true;
+  ok(anyEdgeDimension() === true, 'anyEdgeDimension true when one flag on');
+  [collectPolarity, collectMagnitude, collectDirection] = savedFlags;
+
   console.log('demo: all checks passed');
 }
 if (location.hash === '#test') demo();
