@@ -361,7 +361,9 @@
       box-shadow: var(--shadow);
       transform: translate(-50%, -50%);
     }
-    .a-edge-pop.is-open { display: flex; }
+    .a-edge-pop.is-open { display: flex; flex-direction: column; gap: 3px; }
+    .a-edge-pop-row { display: flex; gap: 3px; }
+    .a-edge-pop-row-label { font: 0.6rem "Alegreya Sans SC", sans-serif; color: var(--text-muted); align-self: center; padding-right: 2px; text-transform: uppercase; letter-spacing: 0.06em; }
     .a-edge-pop button {
       font-family: "Alegreya Sans", sans-serif;
       font-size: 0.8rem;
@@ -461,6 +463,28 @@
 
     <hr class="a-section-divider" />
 
+    <!-- Edge data -->
+    <div>
+      <div class="a-section-title">Edge Data</div>
+      <div class="a-section-stripe" style="background:var(--challenge)"></div>
+      <div style="display:flex; flex-direction:column; gap:0.4rem;">
+        <div class="a-toggle-row">
+          <span>Polarity (+ / –)</span>
+          <input id="collectPolarity" type="checkbox" />
+        </div>
+        <div class="a-toggle-row">
+          <span>Magnitude (1–3)</span>
+          <input id="collectMagnitude" type="checkbox" />
+        </div>
+        <div class="a-toggle-row">
+          <span>Direction (influence)</span>
+          <input id="collectDirection" type="checkbox" />
+        </div>
+      </div>
+    </div>
+
+    <hr class="a-section-divider" />
+
     <!-- Adjacency -->
     <div>
       <div class="a-section-title">Adjacency</div>
@@ -483,12 +507,8 @@
         <g id="edgeBadges"></g>
       </svg>
     </div>
-    <div class="a-hint">Click to add · Drag to move · Del to remove · Hover an edge to mark + / –</div>
-    <div id="edgePop" class="a-edge-pop">
-      <button type="button" data-pol="1">+</button>
-      <button type="button" data-pol="-1">–</button>
-      <button type="button" data-pol="0">clear</button>
-    </div>
+    <div class="a-hint">Click to add · Drag to move · Del to remove · Enable Edge Data to classify edges</div>
+    <div id="edgePop" class="a-edge-pop"></div>
   </div>
 
 </div>
@@ -506,10 +526,48 @@ let showGrid = false;
 let newColor = PALETTE[0];
 let newIcon = null; // icon applied to the next hex added from the New Hexagon section
 let dragging = null;
-// Edge polarity: { [edgeKey]: 1 | -1 }. Keyed on the sorted term-label pair (not
-// hex ids, which don't survive a Load) so classifications round-trip through
-// Save/Load and match how .bee/CSV identify edges. Absent key = unclassified.
-let edgePolarity = {};
+// Per-edge attributes: { [edgeKey]: { polarity?: 1|-1, magnitude?: 1|2|3, direction?: 'forward'|'reverse' } }
+// Keyed on the sorted term-label pair (not hex ids, which don't survive a Load) so
+// classifications round-trip through Save/Load. Absent key/field = unclassified.
+// direction 'forward' = first→second in edgeKey sort order; unset = bidirectional.
+let edgeData = {};
+function edgeField(key, field) {
+  const e = edgeData[key];
+  return e ? e[field] : undefined;
+}
+function setEdgeField(key, field, value) {
+  if (value === null || value === undefined) {
+    if (edgeData[key]) {
+      delete edgeData[key][field];
+      if (Object.keys(edgeData[key]).length === 0) delete edgeData[key];
+    }
+    return;
+  }
+  (edgeData[key] || (edgeData[key] = {}))[field] = value;
+}
+let collectPolarity  = false;
+let collectMagnitude = false;
+let collectDirection = false;
+function anyEdgeDimension() { return collectPolarity || collectMagnitude || collectDirection; }
+// Popup direction choice ('forward'/'reverse' as shown to the user, where
+// 'forward' means la→lb) → stored value relative to edgeKey sort order.
+function resolveDirectionChoice(la, lb, choice) {
+  const influencer = choice === 'forward' ? la : lb;
+  const [first] = [la, lb].map(s => s.trim().toLowerCase()).sort();
+  return influencer.trim().toLowerCase() === first ? 'forward' : 'reverse';
+}
+// Original-case labels ordered by lowercased value — same criterion as edgeKey.
+function orderedLabels(la, lb) {
+  return [la, lb].slice().sort((a, b) => a.trim().toLowerCase() < b.trim().toLowerCase() ? -1 : 1);
+}
+// [ [fromLabel, toLabel], ... ] in influence order. Unset direction = bidirectional (two rows).
+function influenceRows(la, lb) {
+  const [first, second] = orderedLabels(la, lb);
+  const d = edgeField(edgeKey(la, lb), 'direction');
+  if (d === 'forward') return [[first, second]];
+  if (d === 'reverse') return [[second, first]];
+  return [[first, second], [second, first]];
+}
 function edgeKey(labelA, labelB) {
   return [labelA, labelB].map(s => String(s || '').trim().toLowerCase()).sort().join(' ');
 }
@@ -632,17 +690,19 @@ function renderAdjacency() {
     const la = (ha.text || '').trim();
     const lb = (hb.text || '').trim();
     const classifiable = la && lb && la.toLowerCase() !== lb.toLowerCase();
-    const pol = classifiable ? edgePolarity[edgeKey(la, lb)] : undefined;
+    const pol = classifiable && collectPolarity  ? edgeField(edgeKey(la, lb), 'polarity')  : undefined;
+    const mag = classifiable && collectMagnitude ? edgeField(edgeKey(la, lb), 'magnitude') : undefined;
+    const dir = classifiable && collectDirection ? edgeField(edgeKey(la, lb), 'direction') : undefined;
     const color = pol === 1 ? 'var(--secondary)' : pol === -1 ? 'var(--serve)' : 'rgba(62,59,53,0.20)';
 
     const line = svgEl('line', {
       x1: ha.x, y1: ha.y, x2: hb.x, y2: hb.y,
-      stroke: color, 'stroke-width': pol ? 2.5 : 1.5
+      stroke: color, 'stroke-width': mag ? (1.5 + mag) : (pol ? 2.5 : 1.5)
     });
     if (!pol) line.setAttribute('stroke-dasharray', '4 3');
     gEdge.appendChild(line);
 
-    if (!classifiable) return;
+    if (!classifiable || !anyEdgeDimension()) return;
 
     // Interactive badge at the edge midpoint, in the overlay group above #hexes —
     // the line itself sits under the two (touching) hexes and can't be hovered.
@@ -665,6 +725,32 @@ function renderAdjacency() {
       t.textContent = pol === 1 ? '+' : '–';
       gBadge.appendChild(t);
     }
+    if (mag) {
+      const d = svgEl('text', {
+        x: mx + 12, y: my + 12, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+        'font-size': 12, 'font-weight': 700, fill: 'var(--text)', 'pointer-events': 'none',
+        'paint-order': 'stroke', stroke: 'var(--bg-main)', 'stroke-width': 3
+      });
+      d.textContent = String(mag);
+      gBadge.appendChild(d);
+    }
+    if (dir) {
+      // influencer → influenced, in canvas coords
+      const [fromLabel] = influenceRows(la, lb)[0];
+      const src = (ha.text || '').trim().toLowerCase() === fromLabel.toLowerCase() ? ha : hb;
+      const dst = src === ha ? hb : ha;
+      const ang = Math.atan2(dst.y - src.y, dst.x - src.x);
+      // ponytail: marker offsets (s=7, ±0.5 rad) are eyeballed; tune visually if it collides with the polarity badge.
+      const s = 7;
+      const tip = [mx + Math.cos(ang) * s, my + Math.sin(ang) * s];
+      const back = ang + Math.PI;
+      const p1 = [mx + Math.cos(back + 0.5) * s, my + Math.sin(back + 0.5) * s];
+      const p2 = [mx + Math.cos(back - 0.5) * s, my + Math.sin(back - 0.5) * s];
+      gBadge.appendChild(svgEl('polygon', {
+        points: `${tip[0]},${tip[1]} ${p1[0]},${p1[1]} ${p2[0]},${p2[1]}`,
+        fill: 'var(--text)', stroke: 'var(--bg-main)', 'stroke-width': 1.5, 'pointer-events': 'none'
+      }));
+    }
   });
 }
 
@@ -672,9 +758,48 @@ function renderAdjacency() {
 const edgePop = document.getElementById('edgePop');
 let edgePopCloseTimer = null;
 let edgePopTarget = null; // { la, lb }
+function edgePopRow(dim, label, buttons) {
+  const row = document.createElement('div');
+  row.className = 'a-edge-pop-row';
+  row.dataset.dim = dim;
+  if (label) {
+    const l = document.createElement('span');
+    l.className = 'a-edge-pop-row-label';
+    l.textContent = label;
+    row.appendChild(l);
+  }
+  buttons.forEach(([val, text, pol]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.val = val;
+    b.textContent = text;
+    if (pol !== undefined) b.dataset.pol = pol; // drives the +/- button colours from shipped CSS
+    row.appendChild(b);
+  });
+  return row;
+}
+
 function openEdgePop(ev, la, lb) {
   clearTimeout(edgePopCloseTimer);
   edgePopTarget = { la, lb };
+  edgePop.innerHTML = '';
+  if (collectDirection) {
+    edgePop.appendChild(edgePopRow('direction', 'dir', [
+      ['forward', `${la} → ${lb}`],
+      ['reverse', `${lb} → ${la}`],
+      ['clear', 'clear'],
+    ]));
+  }
+  if (collectPolarity) {
+    edgePop.appendChild(edgePopRow('polarity', '+/-', [
+      ['1', '+', 1], ['-1', '–', -1], ['clear', 'clear'],
+    ]));
+  }
+  if (collectMagnitude) {
+    edgePop.appendChild(edgePopRow('magnitude', 'mag', [
+      ['1', '1'], ['2', '2'], ['3', '3'], ['clear', 'clear'],
+    ]));
+  }
   edgePop.style.left = ev.clientX + 'px';
   edgePop.style.top = ev.clientY + 'px';
   edgePop.classList.add('is-open');
@@ -685,15 +810,21 @@ function scheduleEdgePopClose() {
 }
 edgePop.addEventListener('mouseenter', () => clearTimeout(edgePopCloseTimer));
 edgePop.addEventListener('mouseleave', scheduleEdgePopClose);
-edgePop.querySelectorAll('button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    if (!edgePopTarget) return;
-    const k = edgeKey(edgePopTarget.la, edgePopTarget.lb);
-    const v = parseInt(btn.dataset.pol, 10);
-    if (v === 1 || v === -1) edgePolarity[k] = v; else delete edgePolarity[k];
-    edgePop.classList.remove('is-open');
-    render();
-  });
+edgePop.addEventListener('click', ev => {
+  const btn = ev.target.closest('button');
+  if (!btn || !edgePopTarget) return;
+  const dim = btn.closest('[data-dim]').dataset.dim;
+  const val = btn.dataset.val;
+  const k = edgeKey(edgePopTarget.la, edgePopTarget.lb);
+  if (dim === 'polarity') {
+    setEdgeField(k, 'polarity', val === 'clear' ? null : parseInt(val, 10));
+  } else if (dim === 'magnitude') {
+    setEdgeField(k, 'magnitude', val === 'clear' ? null : parseInt(val, 10));
+  } else if (dim === 'direction') {
+    setEdgeField(k, 'direction', val === 'clear' ? null : resolveDirectionChoice(edgePopTarget.la, edgePopTarget.lb, val));
+  }
+  edgePop.classList.remove('is-open');
+  render();
 });
 
 // ─── Text wrap ────────────────────────────────────────────────────────────────
@@ -887,6 +1018,16 @@ sizeInput.addEventListener('input', () => {
 });
 document.getElementById('showGrid').addEventListener('change', e => { showGrid = e.target.checked; renderGrid(); });
 document.getElementById('snap').addEventListener('change', e => { snapToGrid = e.target.checked; });
+[['collectPolarity', v => collectPolarity = v],
+ ['collectMagnitude', v => collectMagnitude = v],
+ ['collectDirection', v => collectDirection = v]].forEach(([id, set]) => {
+  document.getElementById(id).addEventListener('change', e => { set(e.target.checked); render(); });
+});
+function syncDimensionCheckboxes() {
+  document.getElementById('collectPolarity').checked = collectPolarity;
+  document.getElementById('collectMagnitude').checked = collectMagnitude;
+  document.getElementById('collectDirection').checked = collectDirection;
+}
 
 // ─── Canvas coords ────────────────────────────────────────────────────────────
 function svgCoords(e) {
@@ -998,20 +1139,33 @@ function slugify(label) {
 function getContributorLabel() {
   return document.getElementById('contributorLabelInput').value.trim();
 }
-// Adjacent, labeled, non-self-loop hex pairs as {from,to} — the shared edge source
-// for both the CSV export and the .bee save.
+// Adjacent, labeled, non-self-loop term pairs, expanded to directed rows when
+// collectDirection is on (influencer = from; unset direction = two rows). Carries
+// polarity/weight when their parameter is on. Shared source for CSV + .bee.
 function adjacentTermPairs() {
-  const pairs = [];
+  const out = [];
+  let total = 0, undirected = 0;
   getAdjacent().forEach(([a, b]) => {
-    const from = (hexes.find(h => h.id === a)?.text || '').trim();
-    const to   = (hexes.find(h => h.id === b)?.text || '').trim();
-    if (!from || !to || from === to) return;
-    const pair = { from, to };
-    const pol = edgePolarity[edgeKey(from, to)];
-    if (pol === 1 || pol === -1) pair.polarity = pol;
-    pairs.push(pair);
+    const la = (hexes.find(h => h.id === a)?.text || '').trim();
+    const lb = (hexes.find(h => h.id === b)?.text || '').trim();
+    if (!la || !lb || la.toLowerCase() === lb.toLowerCase()) return;
+    const k = edgeKey(la, lb);
+    const pol = edgeField(k, 'polarity');
+    const mag = edgeField(k, 'magnitude');
+    total++;
+    if (collectDirection && edgeField(k, 'direction') === undefined) undirected++;
+    const rows = collectDirection ? influenceRows(la, lb) : [[la, lb]];
+    rows.forEach(([from, to]) => {
+      const row = { from, to };
+      if (collectPolarity && (pol === 1 || pol === -1)) row.polarity = pol;
+      if (collectMagnitude && (mag === 1 || mag === 2 || mag === 3)) row.weight = mag;
+      out.push(row);
+    });
   });
-  return pairs;
+  if (collectDirection && undirected > 0) {
+    console.info(`${undirected} of ${total} edges are unclassified; exported as bidirectional`);
+  }
+  return out;
 }
 
 document.getElementById('btnExportCSV').addEventListener('click', () => {
@@ -1019,12 +1173,20 @@ document.getElementById('btnExportCSV').addEventListener('click', () => {
   const date = new Date().toISOString().slice(0, 10);
   const pairs = adjacentTermPairs();
   if (pairs.length === 0) { alert('No adjacent labeled pairs to export.'); return; }
-  const withPol = pairs.some(p => p.polarity === 1 || p.polarity === -1);
-  const header = withPol ? 'from,to,polarity' : 'from,to';
-  const lines = [header, ...pairs.map(p => {
-    const base = `${csvField(p.from)},${csvField(p.to)}`;
-    return withPol ? `${base},${p.polarity === 1 || p.polarity === -1 ? p.polarity : ''}` : base;
-  })];
+
+  const cols = ['from', 'to'];
+  if (collectMagnitude) cols.push('weight');
+  if (collectPolarity)  cols.push('polarity');
+  if (collectDirection) cols.push('direction');
+
+  const lines = [cols.join(',')];
+  pairs.forEach(p => {
+    const cells = [csvField(p.from), csvField(p.to)];
+    if (collectMagnitude) cells.push(p.weight ?? '');
+    if (collectPolarity)  cells.push(p.polarity ?? '');
+    if (collectDirection) cells.push('1');
+    lines.push(cells.join(','));
+  });
   dl(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `${slug}_${date}.csv`);
 });
 
@@ -1035,9 +1197,11 @@ document.getElementById('btnSave').addEventListener('click', () => {
   const bee = {
     version: '1.0',
     contributor: { label, id: hashId(label) },
+    dimensions: { polarity: collectPolarity, magnitude: collectMagnitude, direction: collectDirection },
     edges: pairs.map(p => {
       const e = { from: p.from, to: p.to };
-      if (p.polarity === 1 || p.polarity === -1) e.effect = p.polarity;
+      if ('weight' in p) e.weight = p.weight;
+      if ('polarity' in p) e.effect = p.polarity;
       return e;
     }),
   };
@@ -1055,12 +1219,47 @@ document.getElementById('btnSave').addEventListener('click', () => {
 // edge at all can't be represented — the .bee format only carries edges.
 function loadBeeData(data) {
   const edgesRaw = Array.isArray(data && data.edges) ? data.edges : [];
-  edgePolarity = {};
+  edgeData = {};
+
+  const dirOf = (f, t) => f.trim().toLowerCase() < t.trim().toLowerCase() ? 'forward' : 'reverse';
+  const dims = data && data.dimensions;
+  if (dims && typeof dims === 'object') {
+    collectPolarity  = !!dims.polarity;
+    collectMagnitude = !!dims.magnitude;
+    collectDirection = !!dims.direction;
+  } else {
+    // No dimensions block: infer conservatively.
+    collectPolarity  = edgesRaw.some(e => e && (e.effect === 1 || e.effect === -1));
+    collectMagnitude = edgesRaw.some(e => e && [1, 2, 3].includes(e.weight));
+    const seen = new Set();
+    collectDirection = edgesRaw.some(e => {
+      if (!e || !e.from || !e.to) return false;
+      const k = edgeKey(String(e.from).trim(), String(e.to).trim());
+      const dirKey = k + '|' + dirOf(String(e.from), String(e.to));
+      if (seen.has(k) && !seen.has(dirKey)) return true; // same pair, opposite order → directed data present
+      seen.add(k); seen.add(dirKey);
+      return false;
+    });
+  }
+
+  const dirSeen = {}; // edgeKey → Set of 'forward'/'reverse'
   edgesRaw.forEach(e => {
     const f = String((e && e.from) || '').trim();
     const t = String((e && e.to) || '').trim();
-    if (f && t && (e.effect === 1 || e.effect === -1)) edgePolarity[edgeKey(f, t)] = e.effect;
+    if (!f || !t || f.toLowerCase() === t.toLowerCase()) return;
+    const k = edgeKey(f, t);
+    if (e.effect === 1 || e.effect === -1) setEdgeField(k, 'polarity', e.effect);
+    if ([1, 2, 3].includes(e.weight)) setEdgeField(k, 'magnitude', e.weight);
+    (dirSeen[k] || (dirSeen[k] = new Set())).add(dirOf(f, t));
   });
+  if (collectDirection) {
+    Object.entries(dirSeen).forEach(([k, orders]) => {
+      if (orders.size === 1) setEdgeField(k, 'direction', [...orders][0]);
+      // size 2 (both orders) → leave unset = bidirectional
+    });
+  }
+
+  syncDimensionCheckboxes();
   const adj = new Map();
   function ensureTerm(t) { if (!adj.has(t)) adj.set(t, new Set()); }
   edgesRaw.forEach(e => {
@@ -1357,22 +1556,146 @@ function demo() {
   ok(edgeKey('A', 'b') === edgeKey('B', 'a'), 'edgeKey is order/case-independent');
   ok(edgeKey('a b', 'c') !== edgeKey('a', 'b c'), 'edgeKey separator is collision-safe');
 
-  const savedHexes = hexes, savedPol = edgePolarity;
+  const savedHexes = hexes, savedData = edgeData;
+  const s1flags = [collectPolarity, collectMagnitude, collectDirection];
   hexes = [
     { id: 1, text: 'alpha', x: 0, y: 0, size: 60 },
     { id: 2, text: 'beta',  x: 90, y: 0, size: 60 },
     { id: 3, text: 'gamma', x: 180, y: 0, size: 60 },
   ];
-  edgePolarity = { [edgeKey('alpha', 'beta')]: 1 };
+  edgeData = {};
+  setEdgeField(edgeKey('alpha', 'beta'), 'polarity', 1);
+  ok(edgeField(edgeKey('alpha', 'beta'), 'polarity') === 1, 'setEdgeField/edgeField round-trip');
+  setEdgeField(edgeKey('alpha', 'beta'), 'polarity', null);
+  ok(edgeData[edgeKey('alpha', 'beta')] === undefined, 'clearing the last field deletes the entry');
+  setEdgeField(edgeKey('alpha', 'beta'), 'polarity', 1);
+
+  const savedPol1 = collectPolarity; collectPolarity = true;
   const pairs = adjacentTermPairs();
   ok(pairs.find(p => p.from === 'alpha' && p.to === 'beta').polarity === 1, 'classified pair carries polarity');
   ok(!('polarity' in pairs.find(p => p.to === 'gamma' || p.from === 'gamma')), 'unclassified pair omits polarity');
+  collectPolarity = savedPol1;
 
   loadBeeData({ edges: [{ from: 'alpha', to: 'beta', effect: -1 }, { from: 'beta', to: 'gamma' }] });
-  ok(edgePolarity[edgeKey('alpha', 'beta')] === -1, '.bee effect round-trips through loadBeeData');
-  ok(edgePolarity[edgeKey('beta', 'gamma')] === undefined, 'edge without effect stays unclassified');
+  ok(edgeField(edgeKey('alpha', 'beta'), 'polarity') === -1, '.bee effect round-trips through loadBeeData');
+  ok(edgeField(edgeKey('beta', 'gamma'), 'polarity') === undefined, 'edge without effect stays unclassified');
 
-  hexes = savedHexes; edgePolarity = savedPol;
+  hexes = savedHexes; edgeData = savedData;
+  [collectPolarity, collectMagnitude, collectDirection] = s1flags; syncDimensionCheckboxes();
+
+  // Task 2: parameters
+  const savedFlags = [collectPolarity, collectMagnitude, collectDirection];
+  ok(anyEdgeDimension() === (collectPolarity || collectMagnitude || collectDirection), 'anyEdgeDimension reflects the flags');
+  collectPolarity = collectMagnitude = collectDirection = false;
+  ok(anyEdgeDimension() === false, 'all dimensions off by default state');
+  collectMagnitude = true;
+  ok(anyEdgeDimension() === true, 'anyEdgeDimension true when one flag on');
+  [collectPolarity, collectMagnitude, collectDirection] = savedFlags;
+
+  // Task 3: dynamic popup
+  const savedFlags3 = [collectPolarity, collectMagnitude, collectDirection];
+  collectPolarity = true; collectMagnitude = true; collectDirection = false;
+  openEdgePop({ clientX: 0, clientY: 0 }, 'care', 'power');
+  const dims = [...document.getElementById('edgePop').querySelectorAll('[data-dim]')].map(r => r.dataset.dim);
+  ok(dims.join(',') === 'direction,polarity,magnitude'.split(',').filter(d => d !== 'direction').join(','),
+     'popup shows exactly the enabled dimensions in order');
+  document.getElementById('edgePop').classList.remove('is-open');
+  [collectPolarity, collectMagnitude, collectDirection] = savedFlags3;
+
+  // Task 4: magnitude rendering
+  const savedHexes4 = hexes, savedData4 = edgeData, savedMag = collectMagnitude;
+  hexes = [{ id: 1, text: 'care', color: '#3B6B35', x: 0, y: 0, size: 60 }, { id: 2, text: 'power', color: '#3B6B35', x: 100, y: 0, size: 60 }];
+  edgeData = {}; collectMagnitude = true;
+  setEdgeField(edgeKey('care', 'power'), 'magnitude', 3);
+  render();
+  const line = document.getElementById('edges').querySelector('line');
+  ok(parseFloat(line.getAttribute('stroke-width')) === 4.5, 'magnitude 3 → stroke-width 4.5');
+  const digits = [...document.getElementById('edgeBadges').querySelectorAll('text')].map(t => t.textContent);
+  ok(digits.includes('3'), 'magnitude digit rendered in the badge overlay');
+  hexes = savedHexes4; edgeData = savedData4; collectMagnitude = savedMag; render();
+
+  // Task 5: direction resolver + rendering
+  const savedHexes5 = hexes, savedData5 = edgeData, savedDir = collectDirection;
+  hexes = [{ id: 1, text: 'Zeta', color: '#3B6B35', x: 0, y: 0, size: 60 }, { id: 2, text: 'apex', color: '#3B6B35', x: 100, y: 0, size: 60 }];
+  edgeData = {}; collectDirection = true;
+  ok(JSON.stringify(orderedLabels('Zeta', 'apex')) === JSON.stringify(['apex', 'Zeta']), 'orderedLabels sorts by lowercased value, keeps case');
+  ok(influenceRows('Zeta', 'apex').length === 2, 'unset direction yields two influence rows');
+  setEdgeField(edgeKey('Zeta', 'apex'), 'direction', resolveDirectionChoice('apex', 'Zeta', 'forward'));
+  const rows = influenceRows('Zeta', 'apex');
+  ok(rows.length === 1 && rows[0][0] === 'apex' && rows[0][1] === 'Zeta', 'forward direction yields one row, influencer first');
+  render();
+  ok(document.getElementById('edgeBadges').querySelector('polygon') !== null, 'direction marker rendered');
+  hexes = savedHexes5; edgeData = savedData5; collectDirection = savedDir; render();
+
+  // Task 6: exports
+  const s6 = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
+  const s6label = document.getElementById('contributorLabelInput').value;
+  const s6ids = [nextId, selectedId];
+  hexes = [{ id: 1, text: 'a', color: '#3B6B35', x: 0, y: 0, size: 60 }, { id: 2, text: 'b', color: '#3B6B35', x: 100, y: 0, size: 60 }, { id: 3, text: 'c', color: '#3B6B35', x: 200, y: 0, size: 60 }];
+  edgeData = {};
+  setEdgeField(edgeKey('a', 'b'), 'polarity', 1);
+  setEdgeField(edgeKey('a', 'b'), 'magnitude', 2);
+  setEdgeField(edgeKey('a', 'b'), 'direction', 'forward'); // a→b
+  collectPolarity = collectMagnitude = collectDirection = true;
+
+  const cap = [];
+  const RealBlob = window.Blob;
+  const realDl = dl; dl = () => {};
+  window.Blob = function (parts, opts) { cap.push(String(parts[0])); return new RealBlob(parts, opts); };
+  document.getElementById('contributorLabelInput').value = 'G';
+  document.getElementById('btnExportCSV').click();
+  document.getElementById('btnSave').click();
+  dl = realDl; window.Blob = RealBlob;
+
+  const csv = cap[0].split('\r\n');
+  ok(csv[0] === 'from,to,weight,polarity,direction', 'CSV header has all three columns in order');
+  ok(csv.includes('a,b,2,1,1'), 'a→b row: weight 2, polarity 1, direction flag 1');
+  ok(csv.includes('b,c,,,1') && csv.includes('c,b,,,1'), 'b–c unclassified direction → two bidirectional rows');
+
+  const bee = JSON.parse(cap[1]);
+  ok(JSON.stringify(bee.dimensions) === JSON.stringify({ polarity: true, magnitude: true, direction: true }), '.bee dimensions block written');
+  const ab = bee.edges.find(e => e.from === 'a' && e.to === 'b');
+  ok(ab.weight === 2 && ab.effect === 1, '.bee a→b edge carries weight and effect');
+  ok(bee.edges.filter(e => (e.from === 'b' && e.to === 'c') || (e.from === 'c' && e.to === 'b')).length === 2, '.bee b–c unclassified → two directed edges');
+
+  [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = s6;
+  document.getElementById('contributorLabelInput').value = s6label;
+  [nextId, selectedId] = s6ids;
+
+  // Task 7: import round-trip
+  const s7 = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
+  const s7label = document.getElementById('contributorLabelInput').value;
+  const s7ids = [nextId, selectedId];
+  loadBeeData({
+    contributor: { label: 'RT' },
+    dimensions: { polarity: true, magnitude: true, direction: true },
+    edges: [
+      { from: 'x', to: 'y', effect: -1, weight: 3 },  // x→y only
+      { from: 'y', to: 'z' }, { from: 'z', to: 'y' }, // mutual
+    ],
+  });
+  ok(collectPolarity && collectMagnitude && collectDirection, 'dimensions block re-applies the three flags');
+  ok(document.getElementById('collectMagnitude').checked === true, 'checkbox synced from dimensions');
+  ok(edgeField(edgeKey('x', 'y'), 'polarity') === -1, 'effect → polarity on import');
+  ok(edgeField(edgeKey('x', 'y'), 'magnitude') === 3, 'weight → magnitude on import');
+  ok(edgeField(edgeKey('x', 'y'), 'direction') === (['x','y'].sort()[0] === 'x' ? 'forward' : 'reverse'), 'single-order edge → forward/reverse');
+  ok(edgeField(edgeKey('y', 'z'), 'direction') === undefined, 'edge seen both ways → direction left unset');
+  [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = s7;
+  document.getElementById('contributorLabelInput').value = s7label;
+  [nextId, selectedId] = s7ids;
+  syncDimensionCheckboxes();
+
+  // FIX 1: rendering gated by the individual collect* flags
+  const s8 = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
+  hexes = [{ id: 1, text: 'care', color: '#3B6B35', x: 0, y: 0, size: 60 }, { id: 2, text: 'power', color: '#3B6B35', x: 100, y: 0, size: 60 }];
+  edgeData = {}; collectPolarity = false; collectMagnitude = true; collectDirection = false;
+  setEdgeField(edgeKey('care', 'power'), 'polarity', 1);
+  render();
+  ok(document.getElementById('edges').querySelector('line').getAttribute('stroke-dasharray') === '4 3', 'stored polarity with collectPolarity off → plain dashed line');
+  ok(![...document.getElementById('edgeBadges').querySelectorAll('text')].some(t => t.textContent === '+' || t.textContent === '–'), 'no +/- badge when collectPolarity off');
+  [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = s8;
+  syncDimensionCheckboxes(); render();
+
   console.log('demo: all checks passed');
 }
 if (location.hash === '#test') demo();

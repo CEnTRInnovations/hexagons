@@ -1,0 +1,1049 @@
+# Edge Attribute Dimensions Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add three independent, optional, map-level edge dimensions — polarity, magnitude, direction — each switched by an on/off parameter defaulting off.
+
+**Architecture:** All application code is in the single-file SPA `index.html` (no build system, no npm). The shipped `edgePolarity` object is generalized into one per-edge `edgeData` store keyed on the sorted term-label pair. Three `collect*` globals gate UI and export. Both file formats (CSV edge list, `.bee` JSON) gain the new data; `loadBeeData()` reads it back. Verification is an in-browser `demo()` assert block run by loading `index.html#test` and reading the console.
+
+**Tech Stack:** Vanilla JavaScript, SVG, CSS custom properties. No dependencies, no build step, no test framework.
+
+**Spec:** `docs/superpowers/specs/2026-08-30-edge-attribute-dimensions-design.md` — read it alongside this plan.
+
+## Global Constraints
+
+- **Single file.** All app changes go in `index.html`. No new files, no dependencies, no build step.
+- **Three parameters, default OFF:** `collectPolarity`, `collectMagnitude`, `collectDirection` — all `false` at declaration.
+- **Edge key is unchanged:** `edgeKey(a, b)` = the two labels `.trim().toLowerCase()`, sorted, joined with a NUL (`<NUL>`). Keys are labels, never hex ids.
+- **`direction` values:** `'forward'` (first→second in `edgeKey` sort order) or `'reverse'` (second→first). No `'both'` value — an unset direction *is* bidirectional.
+- **Magnitude values:** integers `1`, `2`, `3` only. No `0`.
+- **CSV:** column present ⇔ its parameter is on (even if every value is empty). Column order after `from,to`: `weight`, `polarity`, `direction`.
+- **`.bee`:** always write a top-level `"dimensions": { "polarity": bool, "magnitude": bool, "direction": bool }`. Per-edge `weight` / `effect` written only when their parameter is on AND that edge has a value.
+- **Direction export:** `from` = influencer. `forward`/`reverse` → one row/edge; unset → two (one each way). Applies to both CSV and `.bee` only when `collectDirection` is on; off = today's arbitrary single row.
+- **Commit** after every task passes.
+
+---
+
+## Testing Setup (do this once, before Task 1)
+
+There is no test runner. The self-check is the `demo()` function at the bottom of the `<script>` block; it runs when the page URL ends in `#test` and either throws (`Error: demo: <message>`) or logs `demo: all checks passed`.
+
+**To run the test cycle:**
+
+1. From the repo root, start a static server (leave it running):
+   ```bash
+   python3 -m http.server 8000
+   ```
+2. Load `http://localhost:8000/index.html?t=N#test` in a browser (bump `N` each reload to bust cache — the `#test` fragment MUST be last, the trigger is a strict `location.hash === '#test'` check).
+3. Read the JavaScript console. `demo: all checks passed` = pass. An uncaught `Error: demo: …` = fail (the message names the failing assertion).
+
+An agentic executor with the `mcp__Claude_Browser__*` tools does this with `navigate` to that URL (add a cache-buster query like `?t=2` on reload) then `read_console_messages`.
+
+**`demo()` conventions:** it saves globals it mutates (`hexes`, `edgeData`, the three `collect*` flags) into locals at the top of each new block and restores them at the end of that block, so running it never corrupts the live canvas. `loadBeeData()` inside `demo()` is fine — it manipulates real DOM, which exists by the time `demo()` runs.
+
+---
+
+## Task 1: Generalize `edgePolarity` → `edgeData` with field helpers
+
+Pure refactor. No behavior change — the shipped polarity feature works identically afterward, just backed by a nested object.
+
+**Files:**
+- Modify: `index.html` — globals block (~L496–503), `renderAdjacency()` edge block (~L613–658), edge-popup click handler (~L676–685), `adjacentTermPairs()` (~L948–962), `loadBeeData()` effect-populate block (~L989–995), `demo()` (~L1135–1157)
+
+**Interfaces:**
+- Produces:
+  - `let edgeData = {}` — shape `{ [edgeKey]: { polarity?: 1|-1, magnitude?: 1|2|3, direction?: 'forward'|'reverse' } }`
+  - `edgeField(key, field)` → the field value or `undefined`
+  - `setEdgeField(key, field, value)` → sets the field; if `value` is `null`/`undefined`, deletes the field; if the entry then has no fields, deletes the entry
+
+- [ ] **Step 1: Update the `demo()` polarity assertions to the new API**
+
+In `demo()`, replace the polarity block (the part using `edgePolarity`) with:
+
+```js
+  const savedHexes = hexes, savedData = edgeData;
+  hexes = [
+    { id: 1, text: 'alpha', x: 0, y: 0, size: 60 },
+    { id: 2, text: 'beta',  x: 90, y: 0, size: 60 },
+    { id: 3, text: 'gamma', x: 180, y: 0, size: 60 },
+  ];
+  edgeData = {};
+  setEdgeField(edgeKey('alpha', 'beta'), 'polarity', 1);
+  ok(edgeField(edgeKey('alpha', 'beta'), 'polarity') === 1, 'setEdgeField/edgeField round-trip');
+  setEdgeField(edgeKey('alpha', 'beta'), 'polarity', null);
+  ok(edgeData[edgeKey('alpha', 'beta')] === undefined, 'clearing the last field deletes the entry');
+  setEdgeField(edgeKey('alpha', 'beta'), 'polarity', 1);
+
+  const pairs = adjacentTermPairs();
+  ok(pairs.find(p => p.from === 'alpha' && p.to === 'beta').polarity === 1, 'classified pair carries polarity');
+  ok(!('polarity' in pairs.find(p => p.to === 'gamma' || p.from === 'gamma')), 'unclassified pair omits polarity');
+
+  loadBeeData({ edges: [{ from: 'alpha', to: 'beta', effect: -1 }, { from: 'beta', to: 'gamma' }] });
+  ok(edgeField(edgeKey('alpha', 'beta'), 'polarity') === -1, '.bee effect round-trips through loadBeeData');
+  ok(edgeField(edgeKey('beta', 'gamma'), 'polarity') === undefined, 'edge without effect stays unclassified');
+
+  hexes = savedHexes; edgeData = savedData;
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Reload `http://localhost:8000/index.html?t=1#test`. Expected: uncaught `ReferenceError: setEdgeField is not defined` (or `edgeData is not defined`).
+
+- [ ] **Step 3: Replace the global and add helpers**
+
+In the globals block, replace:
+
+```js
+// Edge polarity: { [edgeKey]: 1 | -1 }. Keyed on the sorted term-label pair (not
+// hex ids, which don't survive a Load) so classifications round-trip through
+// Save/Load and match how .bee/CSV identify edges. Absent key = unclassified.
+let edgePolarity = {};
+```
+
+with:
+
+```js
+// Per-edge attributes: { [edgeKey]: { polarity?: 1|-1, magnitude?: 1|2|3, direction?: 'forward'|'reverse' } }
+// Keyed on the sorted term-label pair (not hex ids, which don't survive a Load) so
+// classifications round-trip through Save/Load. Absent key/field = unclassified.
+// direction 'forward' = first→second in edgeKey sort order; unset = bidirectional.
+let edgeData = {};
+function edgeField(key, field) {
+  const e = edgeData[key];
+  return e ? e[field] : undefined;
+}
+function setEdgeField(key, field, value) {
+  if (value === null || value === undefined) {
+    if (edgeData[key]) {
+      delete edgeData[key][field];
+      if (Object.keys(edgeData[key]).length === 0) delete edgeData[key];
+    }
+    return;
+  }
+  (edgeData[key] || (edgeData[key] = {}))[field] = value;
+}
+```
+
+- [ ] **Step 4: Update the render edge block**
+
+In `renderAdjacency()`, change:
+
+```js
+    const pol = classifiable ? edgePolarity[edgeKey(la, lb)] : undefined;
+```
+
+to:
+
+```js
+    const pol = classifiable ? edgeField(edgeKey(la, lb), 'polarity') : undefined;
+```
+
+- [ ] **Step 5: Update the popup click handler**
+
+In the edge-popup `btn.addEventListener('click', …)`, change:
+
+```js
+    if (v === 1 || v === -1) edgePolarity[k] = v; else delete edgePolarity[k];
+```
+
+to:
+
+```js
+    setEdgeField(k, 'polarity', (v === 1 || v === -1) ? v : null);
+```
+
+- [ ] **Step 6: Update `adjacentTermPairs()`**
+
+Change:
+
+```js
+    const pol = edgePolarity[edgeKey(from, to)];
+    if (pol === 1 || pol === -1) pair.polarity = pol;
+```
+
+to:
+
+```js
+    const pol = edgeField(edgeKey(from, to), 'polarity');
+    if (pol === 1 || pol === -1) pair.polarity = pol;
+```
+
+- [ ] **Step 7: Update `loadBeeData()` effect-populate block**
+
+Change:
+
+```js
+  edgePolarity = {};
+  edgesRaw.forEach(e => {
+    const f = String((e && e.from) || '').trim();
+    const t = String((e && e.to) || '').trim();
+    if (f && t && (e.effect === 1 || e.effect === -1)) edgePolarity[edgeKey(f, t)] = e.effect;
+  });
+```
+
+to:
+
+```js
+  edgeData = {};
+  edgesRaw.forEach(e => {
+    const f = String((e && e.from) || '').trim();
+    const t = String((e && e.to) || '').trim();
+    if (f && t && (e.effect === 1 || e.effect === -1)) setEdgeField(edgeKey(f, t), 'polarity', e.effect);
+  });
+```
+
+- [ ] **Step 8: Run the test to verify it passes**
+
+Reload `http://localhost:8000/index.html?t=2#test`. Expected console: `demo: all checks passed`.
+
+- [ ] **Step 9: Manual smoke check**
+
+Load `http://localhost:8000/index.html` (no `#test`). Add two labeled hexes touching, hover the midpoint dot, click `+`. Expected: green `+` badge appears. (Polarity still works; note it is still always-on until Task 2.)
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add index.html
+git commit -m "Refactor edgePolarity into a per-edge edgeData store
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 2: Add the three parameters and the "Edge Data" panel section
+
+**Files:**
+- Modify: `index.html` — globals block (add three flags), left panel markup (~L451, before the Adjacency section), init/handlers area (~after the `snap`/`showGrid` handlers ~L733), `renderAdjacency()` edge block (gate the affordance dot), `demo()`
+
+**Interfaces:**
+- Consumes: `edgeData`, `edgeField` (Task 1)
+- Produces:
+  - `let collectPolarity = false`, `let collectMagnitude = false`, `let collectDirection = false`
+  - checkboxes `#collectPolarity`, `#collectMagnitude`, `#collectDirection` whose `change` handlers set the flags and call `render()`
+  - `anyEdgeDimension()` → `collectPolarity || collectMagnitude || collectDirection`
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `demo()` before the final `console.log`:
+
+```js
+  // Task 2: parameters
+  const savedFlags = [collectPolarity, collectMagnitude, collectDirection];
+  ok(anyEdgeDimension() === (collectPolarity || collectMagnitude || collectDirection), 'anyEdgeDimension reflects the flags');
+  collectPolarity = collectMagnitude = collectDirection = false;
+  ok(anyEdgeDimension() === false, 'all dimensions off by default state');
+  collectMagnitude = true;
+  ok(anyEdgeDimension() === true, 'anyEdgeDimension true when one flag on');
+  [collectPolarity, collectMagnitude, collectDirection] = savedFlags;
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Reload with a new cache-buster. Expected: `ReferenceError: anyEdgeDimension is not defined`.
+
+- [ ] **Step 3: Add the globals**
+
+After `let edgeData = {};` and its helpers, add:
+
+```js
+let collectPolarity  = false;
+let collectMagnitude = false;
+let collectDirection = false;
+function anyEdgeDimension() { return collectPolarity || collectMagnitude || collectDirection; }
+```
+
+- [ ] **Step 4: Add the panel section markup**
+
+In the left panel, immediately before the `<!-- Adjacency -->` block (`index.html` ~L453), insert:
+
+```html
+    <!-- Edge data -->
+    <div>
+      <div class="a-section-title">Edge Data</div>
+      <div class="a-section-stripe" style="background:var(--challenge)"></div>
+      <div style="display:flex; flex-direction:column; gap:0.4rem;">
+        <div class="a-toggle-row">
+          <span>Polarity (+ / –)</span>
+          <input id="collectPolarity" type="checkbox" />
+        </div>
+        <div class="a-toggle-row">
+          <span>Magnitude (1–3)</span>
+          <input id="collectMagnitude" type="checkbox" />
+        </div>
+        <div class="a-toggle-row">
+          <span>Direction (influence)</span>
+          <input id="collectDirection" type="checkbox" />
+        </div>
+      </div>
+    </div>
+
+    <hr class="a-section-divider" />
+
+```
+
+- [ ] **Step 5: Wire the checkbox handlers**
+
+Next to the existing `snap` / `showGrid` handlers (~L732), add:
+
+```js
+[['collectPolarity', v => collectPolarity = v],
+ ['collectMagnitude', v => collectMagnitude = v],
+ ['collectDirection', v => collectDirection = v]].forEach(([id, set]) => {
+  document.getElementById(id).addEventListener('change', e => { set(e.target.checked); render(); });
+});
+```
+
+- [ ] **Step 6: Gate the affordance dot on `collectPolarity` (interim)**
+
+In `renderAdjacency()`, the edge block currently does `if (!classifiable) return;` then always draws the dot. Change that guard to:
+
+```js
+    if (!classifiable || !anyEdgeDimension()) return;
+```
+
+Then in the same block, the `pol` badge already only renders `if (pol)`. Leave it. (Magnitude/direction rendering come in Tasks 4–5.)
+
+- [ ] **Step 7: Run the test to verify it passes**
+
+Reload with a new cache-buster. Expected: `demo: all checks passed`.
+
+- [ ] **Step 8: Manual check**
+
+Load the app (no `#test`). Expected: no midpoint dots on touching edges (all params off — clean lines). Tick **Polarity**. Expected: faint grey dots appear; clicking one still opens the popup and `+`/`–` work. Untick it: dots vanish.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add index.html
+git commit -m "Add collectPolarity/Magnitude/Direction parameters and Edge Data panel
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 3: Rebuild the edge popup as one row per enabled dimension
+
+**Files:**
+- Modify: `index.html` — `.a-edge-pop` CSS (~L360 area, added in the shipped feature), popup markup (`#edgePop`, ~L475), popup JS (`openEdgePop` and the click handler, ~L660–685), `demo()`
+
+**Interfaces:**
+- Consumes: `edgeField`, `setEdgeField`, `edgeKey`, the three `collect*` flags
+- Produces:
+  - `openEdgePop(ev, la, lb)` now builds `#edgePop` contents dynamically from the enabled flags. `la`, `lb` are the two term labels as found (hex order).
+  - Each row is `<div class="a-edge-pop-row" data-dim="polarity|magnitude|direction">` containing `<button data-val="…">`.
+  - Direction buttons use `data-val="forward"` / `data-val="reverse"` / `data-val="clear"` and are labelled with the real term texts.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `demo()` before the final `console.log`:
+
+```js
+  // Task 3: dynamic popup
+  const savedFlags3 = [collectPolarity, collectMagnitude, collectDirection];
+  collectPolarity = true; collectMagnitude = true; collectDirection = false;
+  openEdgePop({ clientX: 0, clientY: 0 }, 'care', 'power');
+  const dims = [...document.getElementById('edgePop').querySelectorAll('[data-dim]')].map(r => r.dataset.dim);
+  ok(dims.join(',') === 'direction,polarity,magnitude'.split(',').filter(d => d !== 'direction').join(','),
+     'popup shows exactly the enabled dimensions in order');
+  document.getElementById('edgePop').classList.remove('is-open');
+  [collectPolarity, collectMagnitude, collectDirection] = savedFlags3;
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Reload. Expected: assertion error `demo: popup shows exactly the enabled dimensions in order` (current popup has fixed buttons, no `[data-dim]` rows).
+
+- [ ] **Step 3: Update the CSS**
+
+Replace the `.a-edge-pop.is-open { display: flex; }` rule with:
+
+```css
+    .a-edge-pop.is-open { display: flex; flex-direction: column; gap: 3px; }
+    .a-edge-pop-row { display: flex; gap: 3px; }
+    .a-edge-pop-row-label { font: 0.6rem "Alegreya Sans SC", sans-serif; color: var(--text-muted); align-self: center; padding-right: 2px; text-transform: uppercase; letter-spacing: 0.06em; }
+```
+
+- [ ] **Step 4: Simplify the popup markup**
+
+Replace the `<div id="edgePop">…</div>` block with just the empty shell:
+
+```html
+    <div id="edgePop" class="a-edge-pop"></div>
+```
+
+- [ ] **Step 5: Rewrite `openEdgePop` and the click handler**
+
+Replace `openEdgePop` and the `edgePop.querySelectorAll('button').forEach(…)` block with:
+
+```js
+function edgePopRow(dim, label, buttons) {
+  const row = document.createElement('div');
+  row.className = 'a-edge-pop-row';
+  row.dataset.dim = dim;
+  if (label) {
+    const l = document.createElement('span');
+    l.className = 'a-edge-pop-row-label';
+    l.textContent = label;
+    row.appendChild(l);
+  }
+  buttons.forEach(([val, text, pol]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.val = val;
+    b.textContent = text;
+    if (pol !== undefined) b.dataset.pol = pol; // drives the +/- button colours from shipped CSS
+    row.appendChild(b);
+  });
+  return row;
+}
+
+function openEdgePop(ev, la, lb) {
+  clearTimeout(edgePopCloseTimer);
+  edgePopTarget = { la, lb };
+  edgePop.innerHTML = '';
+  if (collectDirection) {
+    edgePop.appendChild(edgePopRow('direction', 'dir', [
+      ['forward', `${la} → ${lb}`],
+      ['reverse', `${lb} → ${la}`],
+      ['clear', 'clear'],
+    ]));
+  }
+  if (collectPolarity) {
+    edgePop.appendChild(edgePopRow('polarity', '+/-', [
+      ['1', '+', 1], ['-1', '–', -1], ['clear', 'clear'],
+    ]));
+  }
+  if (collectMagnitude) {
+    edgePop.appendChild(edgePopRow('magnitude', 'mag', [
+      ['1', '1'], ['2', '2'], ['3', '3'], ['clear', 'clear'],
+    ]));
+  }
+  edgePop.style.left = ev.clientX + 'px';
+  edgePop.style.top = ev.clientY + 'px';
+  edgePop.classList.add('is-open');
+}
+
+edgePop.addEventListener('click', ev => {
+  const btn = ev.target.closest('button');
+  if (!btn || !edgePopTarget) return;
+  const dim = btn.closest('[data-dim]').dataset.dim;
+  const val = btn.dataset.val;
+  const k = edgeKey(edgePopTarget.la, edgePopTarget.lb);
+  if (dim === 'polarity') {
+    setEdgeField(k, 'polarity', val === 'clear' ? null : parseInt(val, 10));
+  } else if (dim === 'magnitude') {
+    setEdgeField(k, 'magnitude', val === 'clear' ? null : parseInt(val, 10));
+  } else if (dim === 'direction') {
+    setEdgeField(k, 'direction', val === 'clear' ? null : resolveDirectionChoice(edgePopTarget.la, edgePopTarget.lb, val));
+  }
+  edgePop.classList.remove('is-open');
+  render();
+});
+```
+
+Also add the direction resolver near `edgeKey`:
+
+```js
+// Popup direction choice ('forward'/'reverse' as shown to the user, where
+// 'forward' means la→lb) → stored value relative to edgeKey sort order.
+function resolveDirectionChoice(la, lb, choice) {
+  const influencer = choice === 'forward' ? la : lb;
+  const [first] = [la, lb].map(s => s.trim().toLowerCase()).sort();
+  return influencer.trim().toLowerCase() === first ? 'forward' : 'reverse';
+}
+```
+
+Note: the shipped `mouseenter`/`mouseleave` listeners on `edgePop` and the `dot.addEventListener('click', … openEdgePop …)` in `renderAdjacency()` are unchanged.
+
+- [ ] **Step 6: Run the test to verify it passes**
+
+Reload. Expected: `demo: all checks passed`.
+
+- [ ] **Step 7: Manual check**
+
+App, tick **Polarity** only → popup has one `+ / –` row, still works. Tick **Magnitude** too → popup shows two rows. Nothing breaks; magnitude clicks store but don't render yet (Task 4).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add index.html
+git commit -m "Rebuild edge popup as one row per enabled dimension
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 4: Magnitude — storage rendering (line width + badge digit)
+
+**Files:**
+- Modify: `index.html` — `renderAdjacency()` edge block (~L613–658), `demo()`
+
+**Interfaces:**
+- Consumes: `edgeField`, `gBadge`, `svgEl`
+- Produces: edges with a `magnitude` render `stroke-width: 1.5 + magnitude` and a digit `<text>` at `(mx + 12, my + 12)` in `#edgeBadges`.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `demo()`:
+
+```js
+  // Task 4: magnitude rendering
+  const savedHexes4 = hexes, savedData4 = edgeData, savedMag = collectMagnitude;
+  hexes = [{ id: 1, text: 'care', x: 0, y: 0, size: 60 }, { id: 2, text: 'power', x: 100, y: 0, size: 60 }];
+  edgeData = {}; collectMagnitude = true;
+  setEdgeField(edgeKey('care', 'power'), 'magnitude', 3);
+  render();
+  const line = document.getElementById('edges').querySelector('line');
+  ok(parseFloat(line.getAttribute('stroke-width')) === 4.5, 'magnitude 3 → stroke-width 4.5');
+  const digits = [...document.getElementById('edgeBadges').querySelectorAll('text')].map(t => t.textContent);
+  ok(digits.includes('3'), 'magnitude digit rendered in the badge overlay');
+  hexes = savedHexes4; edgeData = savedData4; collectMagnitude = savedMag; render();
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Reload. Expected: `demo: magnitude 3 → stroke-width 4.5` (line width still driven only by `pol`).
+
+- [ ] **Step 3: Implement magnitude in the render block**
+
+In `renderAdjacency()` edge block, after `const pol = …`, add:
+
+```js
+    const mag = classifiable ? edgeField(edgeKey(la, lb), 'magnitude') : undefined;
+```
+
+Change the line's stroke-width. Current:
+
+```js
+      stroke: color, 'stroke-width': pol ? 2.5 : 1.5
+```
+
+to:
+
+```js
+      stroke: color, 'stroke-width': mag ? (1.5 + mag) : (pol ? 2.5 : 1.5)
+```
+
+Then, after the `if (pol) { … gBadge … }` block, add:
+
+```js
+    if (mag) {
+      const d = svgEl('text', {
+        x: mx + 12, y: my + 12, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+        'font-size': 12, 'font-weight': 700, fill: 'var(--text)', 'pointer-events': 'none',
+        'paint-order': 'stroke', stroke: 'var(--bg-main)', 'stroke-width': 3
+      });
+      d.textContent = String(mag);
+      gBadge.appendChild(d);
+    }
+```
+
+(`mx`, `my` are already computed in the block for the polarity badge. If the block currently computes them only inside `if (pol)`, hoist `const mx = (ha.x + hb.x) / 2, my = (ha.y + hb.y) / 2;` to just after the `if (!classifiable …) return;` guard.)
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Reload. Expected: `demo: all checks passed`.
+
+- [ ] **Step 5: Manual check**
+
+App → tick **Magnitude** → two touching labeled hexes → hover dot → click `3`. Expected: thicker line + a small `3` near the midpoint. Click `clear` → back to thin dashed.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add index.html
+git commit -m "Render edge magnitude as line width plus a midpoint digit
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 5: Direction — storage resolver + chevron marker
+
+**Files:**
+- Modify: `index.html` — helpers near `edgeKey` (~L500), `renderAdjacency()` edge block, `demo()`
+
+**Interfaces:**
+- Consumes: `edgeField`, `edgeKey`, `gBadge`, `svgEl`
+- Produces:
+  - `orderedLabels(la, lb)` → `[first, second]` original-case labels ordered by lowercased value (matches `edgeKey` sort)
+  - `influenceRows(la, lb)` → array of `[fromLabel, toLabel]`: one pair for `forward`/`reverse`, **two** pairs (both ways) when `direction` is unset
+  - render: a small triangle `<polygon>` in `#edgeBadges` at the midpoint, rotated toward the influenced term, for `forward`/`reverse` only (unset → no marker)
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `demo()`:
+
+```js
+  // Task 5: direction resolver + rendering
+  const savedHexes5 = hexes, savedData5 = edgeData, savedDir = collectDirection;
+  hexes = [{ id: 1, text: 'Zeta', x: 0, y: 0, size: 60 }, { id: 2, text: 'apex', x: 100, y: 0, size: 60 }];
+  edgeData = {}; collectDirection = true;
+  ok(JSON.stringify(orderedLabels('Zeta', 'apex')) === JSON.stringify(['apex', 'Zeta']), 'orderedLabels sorts by lowercased value, keeps case');
+  // unset → bidirectional: two rows
+  ok(influenceRows('Zeta', 'apex').length === 2, 'unset direction yields two influence rows');
+  // set apex → Zeta  (apex is "first" in sort order → forward)
+  setEdgeField(edgeKey('Zeta', 'apex'), 'direction', resolveDirectionChoice('apex', 'Zeta', 'forward'));
+  const rows = influenceRows('Zeta', 'apex');
+  ok(rows.length === 1 && rows[0][0] === 'apex' && rows[0][1] === 'Zeta', 'forward direction yields one row, influencer first');
+  render();
+  ok(document.getElementById('edgeBadges').querySelector('polygon') !== null, 'direction marker rendered');
+  hexes = savedHexes5; edgeData = savedData5; collectDirection = savedDir; render();
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Reload. Expected: `ReferenceError: orderedLabels is not defined`.
+
+- [ ] **Step 3: Add the resolvers**
+
+Near `edgeKey` / `resolveDirectionChoice`, add:
+
+```js
+// Original-case labels ordered by lowercased value — same criterion as edgeKey.
+function orderedLabels(la, lb) {
+  return [la, lb].slice().sort((a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : 1);
+}
+// [ [fromLabel, toLabel], ... ] in influence order. Unset direction = bidirectional (two rows).
+function influenceRows(la, lb) {
+  const [first, second] = orderedLabels(la, lb);
+  const d = edgeField(edgeKey(la, lb), 'direction');
+  if (d === 'forward') return [[first, second]];
+  if (d === 'reverse') return [[second, first]];
+  return [[first, second], [second, first]];
+}
+```
+
+- [ ] **Step 4: Render the direction marker**
+
+In `renderAdjacency()` edge block, after the `mag` lookup, add:
+
+```js
+    const dir = classifiable ? edgeField(edgeKey(la, lb), 'direction') : undefined;
+```
+
+After the magnitude badge block, add:
+
+```js
+    if (dir) {
+      // influencer → influenced, in canvas coords
+      const [fromLabel] = influenceRows(la, lb)[0];
+      const src = (ha.text || '').trim().toLowerCase() === fromLabel.toLowerCase() ? ha : hb;
+      const dst = src === ha ? hb : ha;
+      const ang = Math.atan2(dst.y - src.y, dst.x - src.x);
+      const s = 7;
+      const tip = [mx + Math.cos(ang) * s, my + Math.sin(ang) * s];
+      const back = ang + Math.PI;
+      const p1 = [mx + Math.cos(back + 0.5) * s, my + Math.sin(back + 0.5) * s];
+      const p2 = [mx + Math.cos(back - 0.5) * s, my + Math.sin(back - 0.5) * s];
+      gBadge.appendChild(svgEl('polygon', {
+        points: `${tip[0]},${tip[1]} ${p1[0]},${p1[1]} ${p2[0]},${p2[1]}`,
+        fill: 'var(--text)', stroke: 'var(--bg-main)', 'stroke-width': 1.5, 'pointer-events': 'none'
+      }));
+    }
+```
+
+`// ponytail: marker offsets (s=7, ±0.5 rad) are eyeballed; tune visually if it collides with the polarity badge.`
+
+- [ ] **Step 5: Run the test to verify it passes**
+
+Reload. Expected: `demo: all checks passed`.
+
+- [ ] **Step 6: Manual check**
+
+App → tick **Direction** → two touching labeled hexes `care`, `power` → hover dot → click `care → power`. Expected: a small triangle at the midpoint pointing at `power`. Click `clear` → triangle gone.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add index.html
+git commit -m "Add edge direction: forward/reverse storage and a midpoint marker
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 6: Exports — CSV columns/rows and `.bee` dimensions/weight/direction
+
+**Files:**
+- Modify: `index.html` — `adjacentTermPairs()` (~L948), `btnExportCSV` handler (~L965), `btnSave` handler (~L979), `demo()`
+
+**Interfaces:**
+- Consumes: `edgeField`, `edgeKey`, `influenceRows`, `orderedLabels`, the three `collect*` flags
+- Produces:
+  - `adjacentTermPairs()` returns `[{ from, to, polarity?, weight? }]`. When `collectDirection` is on, each adjacent term pair is expanded via `influenceRows()` into one or two directed rows (influencer = `from`); `polarity`/`weight` are copied onto every row for that pair. When off: one row per pair in current hex order.
+  - CSV header: `from,to` + `,weight` if `collectMagnitude` + `,polarity` if `collectPolarity` + `,direction` if `collectDirection` (constant `1` value).
+  - `.bee`: `{ version, contributor, dimensions: { polarity, magnitude, direction }, edges: [...] }`; each edge object has `from`, `to`, `weight` (only if `collectMagnitude` && set), `effect` (only if `collectPolarity` && set).
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `demo()`:
+
+```js
+  // Task 6: exports
+  const s6 = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
+  hexes = [{ id: 1, text: 'a', x: 0, y: 0, size: 60 }, { id: 2, text: 'b', x: 100, y: 0, size: 60 }, { id: 3, text: 'c', x: 200, y: 0, size: 60 }];
+  edgeData = {};
+  setEdgeField(edgeKey('a', 'b'), 'polarity', 1);
+  setEdgeField(edgeKey('a', 'b'), 'magnitude', 2);
+  setEdgeField(edgeKey('a', 'b'), 'direction', 'forward'); // a→b
+  collectPolarity = collectMagnitude = collectDirection = true;
+
+  const cap = [];
+  const RealBlob = window.Blob;
+  window.Blob = function (parts, opts) { cap.push(String(parts[0])); return new RealBlob(parts, opts); };
+  document.getElementById('contributorLabelInput').value = 'G';
+  document.getElementById('btnExportCSV').click();
+  document.getElementById('btnSave').click();
+  window.Blob = RealBlob;
+
+  const csv = cap[0].split('\r\n');
+  ok(csv[0] === 'from,to,weight,polarity,direction', 'CSV header has all three columns in order');
+  ok(csv.includes('a,b,2,1,1'), 'a→b row: weight 2, polarity 1, direction flag 1');
+  ok(csv.includes('b,c,,,1') && csv.includes('c,b,,,1'), 'b–c unclassified direction → two bidirectional rows');
+
+  const bee = JSON.parse(cap[1]);
+  ok(JSON.stringify(bee.dimensions) === JSON.stringify({ polarity: true, magnitude: true, direction: true }), '.bee dimensions block written');
+  const ab = bee.edges.find(e => e.from === 'a' && e.to === 'b');
+  ok(ab.weight === 2 && ab.effect === 1, '.bee a→b edge carries weight and effect');
+  ok(bee.edges.filter(e => (e.from === 'b' && e.to === 'c') || (e.from === 'c' && e.to === 'b')).length === 2, '.bee b–c unclassified → two directed edges');
+
+  [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = s6;
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Reload. Expected: `demo: CSV header has all three columns in order` (current header logic only handles polarity).
+
+- [ ] **Step 3: Rewrite `adjacentTermPairs()`**
+
+Replace the function body with:
+
+```js
+function adjacentTermPairs() {
+  const out = [];
+  getAdjacent().forEach(([a, b]) => {
+    const la = (hexes.find(h => h.id === a)?.text || '').trim();
+    const lb = (hexes.find(h => h.id === b)?.text || '').trim();
+    if (!la || !lb || la.toLowerCase() === lb.toLowerCase()) return;
+    const k = edgeKey(la, lb);
+    const pol = edgeField(k, 'polarity');
+    const mag = edgeField(k, 'magnitude');
+    const rows = collectDirection
+      ? influenceRows(la, lb)
+      : [[la, lb]];
+    rows.forEach(([from, to]) => {
+      const row = { from, to };
+      if (collectPolarity && (pol === 1 || pol === -1)) row.polarity = pol;
+      if (collectMagnitude && (mag === 1 || mag === 2 || mag === 3)) row.weight = mag;
+      out.push(row);
+    });
+  });
+  return out;
+}
+```
+
+Update the CLAUDE.md-style comment above it to match (Task 8 finalizes docs, but keep the inline comment honest here):
+
+```js
+// Adjacent, labeled, non-self-loop term pairs, expanded to directed rows when
+// collectDirection is on (influencer = from; unset direction = two rows). Carries
+// polarity/weight when their parameter is on. Shared source for CSV + .bee.
+```
+
+- [ ] **Step 4: Rewrite the CSV handler**
+
+Replace the `btnExportCSV` click handler with:
+
+```js
+document.getElementById('btnExportCSV').addEventListener('click', () => {
+  const slug = slugify(getContributorLabel());
+  const date = new Date().toISOString().slice(0, 10);
+  const pairs = adjacentTermPairs();
+  if (pairs.length === 0) { alert('No adjacent labeled pairs to export.'); return; }
+
+  const cols = ['from', 'to'];
+  if (collectMagnitude) cols.push('weight');
+  if (collectPolarity)  cols.push('polarity');
+  if (collectDirection) cols.push('direction');
+
+  const lines = [cols.join(',')];
+  pairs.forEach(p => {
+    const cells = [csvField(p.from), csvField(p.to)];
+    if (collectMagnitude) cells.push(p.weight === 1 || p.weight === 2 || p.weight === 3 ? p.weight : '');
+    if (collectPolarity)  cells.push(p.polarity === 1 || p.polarity === -1 ? p.polarity : '');
+    if (collectDirection) cells.push('1');
+    lines.push(cells.join(','));
+  });
+  dl(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `${slug}_${date}.csv`);
+});
+```
+
+- [ ] **Step 5: Rewrite the Save handler**
+
+Replace the `btnSave` click handler with:
+
+```js
+document.getElementById('btnSave').addEventListener('click', () => {
+  const label = getContributorLabel();
+  const pairs = adjacentTermPairs();
+  if (pairs.length === 0) { alert('No adjacent labeled pairs to save.'); return; }
+  const bee = {
+    version: '1.0',
+    contributor: { label, id: hashId(label) },
+    dimensions: { polarity: collectPolarity, magnitude: collectMagnitude, direction: collectDirection },
+    edges: pairs.map(p => {
+      const e = { from: p.from, to: p.to };
+      if (collectMagnitude && (p.weight === 1 || p.weight === 2 || p.weight === 3)) e.weight = p.weight;
+      if (collectPolarity && (p.polarity === 1 || p.polarity === -1)) e.effect = p.polarity;
+      return e;
+    }),
+  };
+  dl(new Blob([JSON.stringify(bee, null, 2)], { type: 'application/json' }), `${slugify(label)}.bee`);
+});
+```
+
+- [ ] **Step 6: Run the test to verify it passes**
+
+Reload. Expected: `demo: all checks passed`.
+
+- [ ] **Step 7: Manual check**
+
+App → tick all three params → build `a`–`b`–`c` chain → classify `a→b` polarity `+`, magnitude `2` → Export csv, open the file. Expected header `from,to,weight,polarity,direction`; `a,b,2,1,1`; `b–c` as two rows `b,c,,,1` and `c,b,,,1`. Save → `.bee` has the `dimensions` block.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add index.html
+git commit -m "Export edge dimensions: CSV columns + .bee dimensions/weight/direction
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 7: Import — read dimensions and all three fields in `loadBeeData()`
+
+**Files:**
+- Modify: `index.html` — `loadBeeData()` (~L989 populate block and ~L1114 tail), `demo()`
+
+**Interfaces:**
+- Consumes: `setEdgeField`, `edgeKey`, the three `collect*` flags, checkboxes `#collectPolarity`/`#collectMagnitude`/`#collectDirection`
+- Produces: after `loadBeeData(data)`, `edgeData` is repopulated from `data.edges` (`effect`→polarity, `weight`→magnitude, edge ordering→direction), and the three flags + checkboxes reflect `data.dimensions` (or a conservative inference when absent).
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `demo()`:
+
+```js
+  // Task 7: import round-trip
+  const s7 = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
+  loadBeeData({
+    contributor: { label: 'RT' },
+    dimensions: { polarity: true, magnitude: true, direction: true },
+    edges: [
+      { from: 'x', to: 'y', effect: -1, weight: 3 },  // x→y only
+      { from: 'y', to: 'z' }, { from: 'z', to: 'y' }, // mutual
+    ],
+  });
+  ok(collectPolarity && collectMagnitude && collectDirection, 'dimensions block re-applies the three flags');
+  ok(document.getElementById('collectMagnitude').checked === true, 'checkbox synced from dimensions');
+  ok(edgeField(edgeKey('x', 'y'), 'polarity') === -1, 'effect → polarity on import');
+  ok(edgeField(edgeKey('x', 'y'), 'magnitude') === 3, 'weight → magnitude on import');
+  ok(edgeField(edgeKey('x', 'y'), 'direction') === (['x','y'].sort()[0] === 'x' ? 'forward' : 'reverse'), 'single-order edge → forward/reverse');
+  ok(edgeField(edgeKey('y', 'z'), 'direction') === undefined, 'edge seen both ways → direction left unset');
+  [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = s7;
+  ['collectPolarity','collectMagnitude','collectDirection'].forEach(id => {
+    document.getElementById(id).checked = window[id === 'collectPolarity' ? 'collectPolarity' : id === 'collectMagnitude' ? 'collectMagnitude' : 'collectDirection'];
+  });
+```
+
+Note: the last loop is defensive cleanup so the manual canvas isn't left with stray checkbox state after `demo()`. Simpler equivalent is acceptable:
+
+```js
+  syncDimensionCheckboxes();
+```
+
+if Step 3 exposes that helper.
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Reload. Expected: `demo: dimensions block re-applies the three flags`.
+
+- [ ] **Step 3: Implement the populate + sync**
+
+Add a helper near the checkbox handlers:
+
+```js
+function syncDimensionCheckboxes() {
+  document.getElementById('collectPolarity').checked = collectPolarity;
+  document.getElementById('collectMagnitude').checked = collectMagnitude;
+  document.getElementById('collectDirection').checked = collectDirection;
+}
+```
+
+In `loadBeeData()`, replace the current `edgeData = {}; edgesRaw.forEach(…)` populate block with:
+
+```js
+  edgeData = {};
+
+  const dims = data && data.dimensions;
+  if (dims && typeof dims === 'object') {
+    collectPolarity  = !!dims.polarity;
+    collectMagnitude = !!dims.magnitude;
+    collectDirection = !!dims.direction;
+  } else {
+    // No dimensions block: infer conservatively.
+    collectPolarity  = edgesRaw.some(e => e && (e.effect === 1 || e.effect === -1));
+    collectMagnitude = edgesRaw.some(e => e && [1, 2, 3].includes(e.weight));
+    const seen = new Set();
+    collectDirection = edgesRaw.some(e => {
+      if (!e || !e.from || !e.to) return false;
+      const k = edgeKey(String(e.from).trim(), String(e.to).trim());
+      const dirKey = k + '|' + (String(e.from).trim().toLowerCase() < String(e.to).trim().toLowerCase() ? 'f' : 'r');
+      if (seen.has(k) && !seen.has(dirKey)) return true; // same pair, opposite order → directed data present
+      seen.add(k); seen.add(dirKey);
+      return false;
+    });
+  }
+
+  const dirSeen = {}; // edgeKey → Set of 'forward'/'reverse'
+  edgesRaw.forEach(e => {
+    const f = String((e && e.from) || '').trim();
+    const t = String((e && e.to) || '').trim();
+    if (!f || !t || f.toLowerCase() === t.toLowerCase()) return;
+    const k = edgeKey(f, t);
+    if (e.effect === 1 || e.effect === -1) setEdgeField(k, 'polarity', e.effect);
+    if ([1, 2, 3].includes(e.weight)) setEdgeField(k, 'magnitude', e.weight);
+    const order = f.toLowerCase() < t.toLowerCase() ? 'forward' : 'reverse';
+    (dirSeen[k] || (dirSeen[k] = new Set())).add(order);
+  });
+  if (collectDirection) {
+    Object.entries(dirSeen).forEach(([k, orders]) => {
+      if (orders.size === 1) setEdgeField(k, 'direction', [...orders][0]);
+      // size 2 (both orders) → leave unset = bidirectional
+    });
+  }
+
+  syncDimensionCheckboxes();
+```
+
+Keep the rest of `loadBeeData()` (the `adj` graph build, layout, `contributor.label` restore, `render()`) unchanged. The layout still uses `from`/`to` as an unordered pair, so directed/duplicate edges don't affect placement — but confirm the `adj` build still de-dups: `adj.get(from).add(to)` on a `Set` already handles the mutual-edge duplication.
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Reload. Expected: `demo: all checks passed`.
+
+- [ ] **Step 5: Manual round-trip check**
+
+App → tick all three params → build `care`–`power`, classify `care→power` polarity `+`, magnitude `2`, direction `care→power` → Save. Then Load that `.bee`. Expected: all three checkboxes come back ticked, the edge shows `+` badge, thick line, digit `2`, and the direction triangle pointing at `power`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add index.html
+git commit -m "Import edge dimensions: read dimensions block + effect/weight/order in loadBeeData
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 8: Documentation
+
+No test. Docs are `CLAUDE.md` and `docs/apiary-output-specification.md` (both tracked despite `docs/` being in `.gitignore` — use `git add -f` if needed; check `git status` after adding).
+
+**Files:**
+- Modify: `CLAUDE.md`, `docs/apiary-output-specification.md`
+
+- [ ] **Step 1: Update `CLAUDE.md`**
+
+- **Mutable globals** line: add `collectPolarity`, `collectMagnitude`, `collectDirection` and rename `edgePolarity` → `edgeData`. Replace the `edgePolarity` explanatory paragraph with:
+
+  > `edgeData` is a plain object `{ [edgeKey]: { polarity?, magnitude?, direction? } }` — optional per-edge classifications, each dimension gated by its `collect*` parameter (all default off). `polarity` is `±1`, `magnitude` is `1`–`3`, `direction` is `'forward'` / `'reverse'` relative to `edgeKey`'s sort order (unset = bidirectional). Keyed on the sorted, lowercased term-label pair via `edgeKey(a, b)`, so classifications survive a Save→Load round-trip.
+
+- **Key Functions** table: replace the `edgeKey` row's neighbours with rows for `edgeField` / `setEdgeField`, `orderedLabels` / `influenceRows`, `resolveDirectionChoice`, `syncDimensionCheckboxes`. Update the `adjacentTermPairs()` row to: "labeled non-self-loop pairs, expanded to directed rows when `collectDirection` is on, carrying `polarity`/`weight` per enabled parameter". Update the `loadBeeData(data)` row to mention it repopulates `edgeData` and re-applies `data.dimensions`.
+
+- **Import / Export** section:
+  - **Save**: note the `dimensions` block is always written; `weight` per edge when `collectMagnitude` && set; `effect` when `collectPolarity` && set; direction encoded by edge order with unset → two directed edge objects.
+  - **Load**: note `data.dimensions` re-applies the three parameters (with conservative inference when absent) and `weight`/`effect`/edge-order repopulate `edgeData`.
+  - **Export csv**: replace the polarity-column paragraph with: columns after `from,to` are `weight` / `polarity` / `direction`, each present iff its parameter is on; `direction` is a constant `1` whose presence flags directed mode (influencer = `from`); unclassified direction → two rows.
+  - Replace the **Edge polarity classification** subsection with an **Edge data classification** subsection describing the three parameters, the per-dimension popup rows, and the badge rendering (colored `+`/`–`, line thickness + digit for magnitude, midpoint triangle for direction).
+
+- **Extending the App**: replace the "Expose the neutral polarity state" bullet's neighbours as needed; add a bullet noting MICMAC (influence × dependence) is a supported downstream when `direction` + `magnitude` are on, and the influence matrix is a straight pivot of the directed weighted edge list (built downstream).
+
+- [ ] **Step 2: Update `docs/apiary-output-specification.md`**
+
+- **§3** — add **§3.5 `direction`**:
+
+  > **Type:** presence flag. **Permitted values:** the `direction` column, when present, holds a constant `1`. Its presence declares the edge list directed: `from` is the influencing term, `to` the influenced. Absence means the list is undirected (the default). A term pair the contributor did not assign a direction to appears as two rows, one each way. **Consumer note:** build the influence matrix as `M[from][to] += weight` (weight defaulting to `1`).
+
+- **§4** — in the intro or §4.2/§4.4, note that `weight` / `polarity` / `direction` column presence now tracks an explicit contributor parameter, so an all-empty column is a valid state meaning "dimension was offered but nothing classified".
+
+- **§4.4 (`NO POLARITY`)** — add a sentence that `NO WEIGHT` is likewise now a togglable rather than permanent state.
+
+- **§7** (`.bee` differences list) — document the new top-level `dimensions` object and that `weight` / `effect` / edge-ordering are parameter-gated; unset direction → two directed edge objects.
+
+- **§8** — add example **§8.4 "With direction and weight (MICMAC-shaped)"**:
+
+  ```
+  from,to,weight,direction
+  care,power,2,1
+  power,care,2,1
+  trust,care,3,1
+  ```
+
+- **Changelog** — add a row: `| 1.2 | 2026-08-30 | Added optional direction column (presence = directed edge list, from = influencer); weight/polarity/direction column presence now tracks explicit Apiary parameters; .bee gains a dimensions block |`.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add -f CLAUDE.md docs/apiary-output-specification.md
+git status   # confirm both staged
+git commit -m "Docs: edge attribute dimensions (polarity/magnitude/direction)
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
+
+---
+
+## Self-Review
+
+**Spec coverage:**
+
+| Spec section | Task |
+|---|---|
+| §3.1 unified `edgeData` | Task 1 |
+| §3.1 no `'both'` value / unset = bidirectional | Task 5 (`influenceRows`), Task 3 (popup) |
+| §3.3 migration from `edgePolarity` | Task 1 |
+| §4.1 three `collect*` globals | Task 2 |
+| §4.2 "Edge Data" panel section | Task 2 |
+| §4.3 `.bee` `dimensions`; CSV column-presence | Task 6 |
+| §5 popup rows per enabled parameter | Task 3 |
+| §5 direction row with real term labels | Task 3 |
+| §6 magnitude → stroke-width + digit | Task 4 |
+| §6 direction → chevron; unset → plain dot | Task 5 |
+| §6 polarity badge unchanged | Task 1 (preserved) |
+| §7.1 CSV columns + order | Task 6 |
+| §7.2 direction row rules (unset → two rows) | Task 6 (`adjacentTermPairs` via `influenceRows`) |
+| §8 `.bee` `dimensions` / `weight` / `effect` / direction encoding | Task 6 |
+| §9 `loadBeeData` reset + repopulate + apply `dimensions` + inference | Task 7 |
+| §9 layout unaffected by direction | Task 7 Step 3 (confirmation note) |
+| §10 doc updates | Task 8 |
+| §11 D5 one-time confirm on enabling direction with non-empty `edgeData` | **See note below** |
+| §12 affordance dot gated on parameters; renamed global | Task 2, Task 1 |
+| §13 `demo()` assertions | folded into Tasks 1–7 |
+| §14 file map | matches |
+
+**Gap found — §11 D5 (confirm dialog when enabling `direction` on a non-empty `edgeData`):** the spec lists this as a mitigation for the associative→causal reinterpretation. It is low-value polish and not load-bearing for any data path. **Decision:** drop it from scope for this plan rather than add a task — a `confirm()` on a checkbox is trivial to add later if facilitators report confusion. Noted here so the omission is deliberate, not missed.
+
+**Gap found — §11 D2 pre-export note ("6 of 18 edges unclassified; exported as bidirectional"):** also a mitigation, not a data requirement. **Decision:** drop from scope; `adjacentTermPairs()` already exports every pair (never lossy), so the note is informational only.
+
+**Placeholder scan:** no TBD/TODO; every code step has real content; test code is concrete.
+
+**Type consistency:** `edgeField`/`setEdgeField` signatures consistent across Tasks 1, 3–7. `influenceRows` returns `[[from,to],…]` — consumed identically in Task 5 (render) and Task 6 (`adjacentTermPairs`). `resolveDirectionChoice(la, lb, 'forward'|'reverse')` → `'forward'|'reverse'` used in Task 3 (popup) and Task 5 (test). CSV column order `weight, polarity, direction` consistent between Task 6 Step 3/4 and the Task 6 test and Task 8 docs.

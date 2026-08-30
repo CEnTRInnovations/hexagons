@@ -1,5 +1,5 @@
 # Apiary Output Specification
-## CEnTR\*CANON Ingestion Contract — v1.2
+## CEnTR\*CANON Ingestion Contract — v1.3
 
 **Applies to:** CEnTR\*CANON v1 (`mod_gather` ingest pipeline)
 **Document status:** Draft
@@ -40,8 +40,14 @@ Apiary must produce exactly these columns, in this order. No additional columns
 are required, but extra columns are tolerated and silently dropped on ingest.
 
 ```
-from,to,weight,polarity
+from,to,weight,polarity,direction
 ```
+
+`weight`, `polarity`, and `direction` are each optional and each gated by an
+explicit Apiary parameter (see §3.3–§3.5 and §4). A column is present in the
+file if and only if the contributor turned its dimension on in Apiary — so an
+all-empty optional column is a valid state meaning "the dimension was offered
+but the contributor classified no edges."
 
 ### 3.1 `from` — required
 
@@ -83,6 +89,18 @@ treated as identical edges.
 | Default rationale | Most term associations in an Apiary map are constructive co-occurrences; absence of polarity data is not neutrality — it means the contributor did not characterize the valence |
 | v2 note | Signed-graph analysis (signed modularity, frustration-based community detection) in `mod_cartography` is planned for v2; the column is defined now to avoid a breaking schema change later |
 
+### 3.5 `direction` — optional
+
+| Property | Specification |
+|---|---|
+| Type | Presence flag |
+| Permitted values | When present, every row's `direction` value is the constant `1`. The column carries no per-row information |
+| Null/empty | If the column is absent, the edge list is **undirected** (the default, §6.2) |
+| Interpretation | The **presence** of the column declares the edge list directed: `from` is the influencing term, `to` the influenced. Direction is read from row order, not from the column value |
+| Bidirectional pairs | A term pair the contributor did not assign a direction to appears as **two rows**, one each way (`A,B` and `B,A`) |
+| Consumer note | Build the influence matrix as `M[from][to] += weight`, with `weight` defaulting to `1` when the `weight` column is absent or a cell is empty. This is the MICMAC (influence × dependence) input |
+| Default rationale | Absence is not "no direction known" — it means the contributor is treating the map as a plain undirected association graph, the historical default |
+
 ---
 
 ## 4. Validation States
@@ -106,9 +124,12 @@ empty. Weight is imputed as `1` for every edge. The condition is logged in the
 concordance manifest and surfaced as a non-blocking advisory in the UI.
 
 **Gate effect:** None — does not block progression.
-**Apiary implication:** If Apiary does not collect weight data, omitting the
-`weight` column entirely is the preferred export strategy (cleaner than
-exporting an all-empty column). `NO WEIGHT` is an acceptable file state.
+**Apiary implication:** As of Apiary v1.3, weight collection (called *magnitude*
+in the Apiary UI) is a per-map togglable parameter, not a permanent capability
+gap. When the contributor leaves it off, the `weight` column is omitted and the
+file is `NO WEIGHT`. When they turn it on, the column is emitted even if no edge
+is classified (all-empty → every weight imputed `1`, same outcome as omission).
+Both are acceptable file states.
 
 ### 4.3 `SCHEMA MISMATCH`
 
@@ -134,11 +155,18 @@ non-blocking advisory in the UI alongside `NO WEIGHT` if both apply.
 
 **Gate effect:** None — does not block progression.
 **Apiary implication:** Apiary collects polarity per edge as an *optional*
-`+` / `–` classification. When a contributor classifies at least one edge,
-the `polarity` column is emitted with `1` / `-1` for those edges and empty
-for the rest (empty → imputed `1`, per §3.4). When no edge is classified,
-the column is omitted entirely and the file is `NO POLARITY` — still an
-acceptable and expected state.
+`+` / `–` classification, gated by a per-map parameter. As of Apiary v1.3,
+column presence follows that parameter, not the data: when the contributor
+turns polarity on, the `polarity` column is emitted with `1` / `-1` for
+classified edges and empty for the rest (empty → imputed `1`, per §3.4) —
+**even if zero edges are classified**. When the parameter is off, the column
+is omitted entirely and the file is `NO POLARITY`. Both are acceptable states.
+(This changed from Apiary's interim polarity build, which only added the
+column once at least one edge was classified.)
+
+The same parameter-gated rule applies to `weight` (§4.2) and `direction`
+(§3.5): a classified edge whose dimension parameter is **off** exports with
+**no column** for that dimension.
 
 ---
 
@@ -176,6 +204,11 @@ The edge list is **undirected**. The pair (`from` = A, `to` = B) and
 (`from` = B, `to` = A) are treated as the same edge throughout the bundle
 algorithm and network analysis. Apiary should not assign semantic meaning to
 which term appears in `from` vs. `to`.
+
+**Exception — directed mode (§3.5):** when the `direction` column is present,
+`from` = influencer and `to` = influenced, and row order *is* meaningful. This
+mode feeds MICMAC structural analysis downstream; the bundle algorithm and
+undirected network analysis still collapse the pair as above.
 
 ### 6.3 Duplicate edges
 
@@ -260,6 +293,19 @@ from,to,weight,polarity
 community engagement,research,1,1
 ```
 
+### 8.5 With direction and weight (MICMAC-shaped)
+
+Direction parameter on (`direction` column present, constant `1`, `from` =
+influencer), magnitude parameter on (`weight` column). The `care`/`power` pair
+had no direction assigned, so it appears as two rows; `trust,care` was directed.
+
+```csv
+from,to,weight,direction
+care,power,2,1
+power,care,2,1
+trust,care,3,1
+```
+
 ---
 
 ## 9. Out-of-Scope for Apiary v1
@@ -291,9 +337,10 @@ CEnTR\*CANON.
 {
   "version": "1.0",
   "contributor": { "label": "Group A", "id": "cwdsgcg" },
+  "dimensions": { "polarity": false, "magnitude": true, "direction": true },
   "edges": [
-    { "from": "community", "to": "trust" },
-    { "from": "trust", "to": "safety" }
+    { "from": "care", "to": "power", "weight": 2 },
+    { "from": "trust", "to": "care", "weight": 3 }
   ]
 }
 ```
@@ -304,10 +351,25 @@ Key differences from the CSV contract:
   the CSV format deliberately leaves contributor metadata out of the file
   (§9). `id` is a short, deterministic hash of the label (Apiary's
   `hashId()`), stable across repeated saves of the same label.
-- `weight` is omitted per edge — Apiary doesn't collect it (defaults to `1`
-  on ingest). `effect` (the `.bee` equivalent of CSV `polarity`) is written
-  only on edges the contributor classified `+` / `–` (`1` / `-1`); unclassified
-  edges omit it and it defaults to `1` on ingest.
+- `dimensions` — a top-level object `{ polarity, magnitude, direction }` of
+  booleans, **always written**, recording which per-map dimension parameters
+  the contributor had on. On Load, Apiary re-applies these; a `.bee` file
+  without a `dimensions` block is read with conservative inference (polarity
+  from any `effect` of ±1, magnitude from any `weight` in 1–3, direction only
+  if a term pair appears in both orders). Note that `dimensions` is an
+  Apiary-specific extension: the current `bee-file-spec.json` does not define
+  it and Apiary Hive ignores it today. It is legal only because the spec sets
+  `additionalProperties: true`.
+- `weight` is written per edge **only when the magnitude parameter is on and
+  that edge has a magnitude** (`1` / `2` / `3`); otherwise omitted (defaults
+  to `1` on ingest). `effect` (the `.bee` equivalent of CSV `polarity`) is
+  written per edge **only when the polarity parameter is on and the edge is
+  classified** `+` / `–` (`1` / `-1`); otherwise omitted (defaults to `1`).
+- **direction** is encoded by edge order, not a field: `from` = influencer.
+  A pair the contributor gave a direction appears as one edge object; a pair
+  with the direction parameter on but no direction set appears as **two edge
+  objects**, one each way. With the direction parameter off, edge order is
+  arbitrary (sorted).
 - Same edge source and edge rules (§6) as the CSV: touching, labeled,
   non-self-loop hex pairs. Isolated hexes are excluded from both formats
   equally.
@@ -328,3 +390,4 @@ CEnTR\*CANON ingestion path. `.bee` compatibility is governed by
 | 1.0 | 2026-05-26 | Initial specification; aligned to CEnTR\*CANON v1 `mod_gather` |
 | 1.1 | 2026-05-26 | Added `polarity` column (-1/0/1, optional, default 1); added `NO POLARITY` validation state; clarified edge list as undirected; updated examples |
 | 1.2 | 2026-07-02 | Renamed `composite_slug` → `contributor_slug`, now generated by Apiary's own Contributor label field (§7); noted the `.bee` interchange format as a parallel, non-competing output for Apiary Hive (§10); clarified that Composite/contributor metadata has a home in `.bee` even though it remains out of scope for the CSV (§9) |
+| 1.3 | 2026-08-30 | Added optional `direction` column (§3.5): presence declares the edge list directed, `from` = influencer, bidirectional pairs emit two rows — MICMAC input. `weight` / `polarity` / `direction` column presence now tracks explicit Apiary per-map parameters, so an all-empty column is valid (§4); `NO WEIGHT` reframed as togglable (§4.2). `.bee` gains an always-written top-level `dimensions` block; `weight` / `effect` / edge-ordering are parameter-gated (§10) |

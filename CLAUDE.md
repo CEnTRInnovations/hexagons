@@ -59,9 +59,9 @@ Each hexagon is a plain JavaScript object stored in the `hexes` array:
 }
 ```
 
-Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `showGrid`, `newColor`, `dragging`, `edgePolarity`.
+Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `showGrid`, `newColor`, `dragging`, `edgeData`, `collectPolarity`, `collectMagnitude`, `collectDirection`.
 
-`edgePolarity` is a plain object `{ [edgeKey]: 1 | -1 }` — optional per-edge polarity classifications (`+` / `–`). Keyed on the sorted, lowercased term-label pair (via `edgeKey(a, b)`), **not** hex ids, so classifications survive a Save→Load round-trip. An absent key means the edge is unclassified.
+`edgeData` is a plain object `{ [edgeKey]: { polarity?, magnitude?, direction? } }` — optional per-edge classifications, each dimension gated by its `collect*` parameter (all default off). `polarity` is `±1`, `magnitude` is `1`–`3`, `direction` is `'forward'` / `'reverse'` relative to `edgeKey`'s sort order (unset = bidirectional). Keyed on the sorted, lowercased term-label pair via `edgeKey(a, b)`, so classifications survive a Save→Load round-trip. Helpers `edgeField(key, field)` / `setEdgeField(key, field, value)` read and write single fields; setting `null`/`undefined` deletes the field, and an emptied entry is deleted whole.
 
 ---
 
@@ -85,9 +85,13 @@ Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `show
 | `hashId(str)` | Deterministic, non-cryptographic hash → short stable id string for a contributor label |
 | `slugify(label)` | Filename-safe slug: lowercase, whitespace → `_`, strips other unsafe characters |
 | `getContributorLabel()` | Reads the trimmed value of the Group field |
-| `adjacentTermPairs()` | Shared edge source for both Export csv and Save — labeled, non-self-loop adjacent hex pairs as `{from, to}`, plus `polarity: 1 \| -1` when the edge is classified |
-| `edgeKey(a, b)` | Sorted, lowercased, NUL-joined term-label pair → the stable key used for `edgePolarity` |
-| `loadBeeData(data)` | Rebuilds the hex canvas from a parsed `.bee` file's `edges`, and repopulates `edgePolarity` from any per-edge `effect` values (see Import / Export) |
+| `adjacentTermPairs()` | Shared edge source for both Export csv and Save — labeled non-self-loop adjacent hex pairs as `{from, to}`, expanded to directed rows when `collectDirection` is on (`from` = influencer; unset direction → two rows), carrying `polarity` / `weight` per enabled parameter. Logs a `console.info` count of unclassified (bidirectional) pairs when direction is on |
+| `edgeKey(a, b)` | Sorted, lowercased, NUL-joined term-label pair → the stable key used for `edgeData` |
+| `edgeField(k, f)` / `setEdgeField(k, f, v)` | Get / set one dimension field on an `edgeData` entry; `v` null/undefined deletes the field, an emptied entry is removed |
+| `orderedLabels(la, lb)` / `influenceRows(la, lb)` | `orderedLabels` returns the pair in `edgeKey` sort order (original case); `influenceRows` resolves a pair's stored direction to `[[from, to], …]` — one row for forward/reverse, **two** rows when direction is unset |
+| `resolveDirectionChoice(la, lb, choice)` | Maps a popup `'forward'`/`'reverse'` choice (relative to the displayed `la → lb`) to the value stored relative to `edgeKey` sort order |
+| `syncDimensionCheckboxes()` | Writes the three `collect*` globals back onto the Edge Data panel checkboxes (used after Load) |
+| `loadBeeData(data)` | Rebuilds the hex canvas from a parsed `.bee` file's `edges`, re-applies `data.dimensions` to the three `collect*` parameters (conservative inference when absent), and repopulates `edgeData` from per-edge `effect` / `weight` / edge-order (see Import / Export) |
 
 ---
 
@@ -101,20 +105,29 @@ Free-text field (`#contributorLabelInput`, placeholder `e.g. Group A`), spaces a
 - `slugify(label)` — lowercased, whitespace collapsed to `_`, unsafe characters stripped — used in both export filenames.
 
 ### Save
-Writes a `.bee` JSON file: `{ version, contributor: { label, id }, edges: [{ from, to }] }`, matching the interchange spec Apiary Hive consumes (`bee-file-spec.json`, in the `apiary-hive` repo). A classified edge also carries `effect: 1 | -1`; unclassified edges omit `effect` entirely (the spec defaults it to `1` on ingest, same rationale as `NO WEIGHT`/`NO POLARITY` below). `weight` is always omitted — Apiary doesn't collect it. Edges come from `adjacentTermPairs()`. Filename: `{slug}.bee` (no date — a stable working-file name, unlike the dated CSV).
+Writes a `.bee` JSON file: `{ version, contributor: { label, id }, dimensions: { polarity, magnitude, direction }, edges: [...] }`, matching the interchange spec Apiary Hive consumes (`bee-file-spec.json`, in the `apiary-hive` repo). The `dimensions` block (three booleans reflecting the Edge Data parameters) is **always written**. Per edge: `weight: 1 | 2 | 3` only when `collectMagnitude` is on and the pair has a magnitude; `effect: 1 | -1` only when `collectPolarity` is on and the pair is classified; both otherwise omitted (the spec defaults each to `1` on ingest, same rationale as `NO WEIGHT`/`NO POLARITY` below). Direction is encoded by edge order (`from` = influencer) — a pair with the direction parameter on but no direction set is written as **two directed edge objects**. Edges come from `adjacentTermPairs()`. Filename: `{slug}.bee` (no date — a stable working-file name, unlike the dated CSV).
 
 ### Load
 Reads a `.bee` file and rebuilds the canvas from its `edges`. Positions aren't part of the `.bee` spec, so `loadBeeData()` re-lays-out the terms on the same hex grid used by snap-to-grid: it walks the edge graph and seats each term in a free grid cell next to an already-placed neighbor. The placement is constrained so it will **never seat two unrelated terms as grid-neighbors** — a cell is only valid for a term if every already-occupied grid-neighbor of that cell is a real graph-neighbor of that term. This is deliberately a correctness-over-completeness tradeoff:
 - **Never fabricates an adjacency.** Verified by round-tripping synthetic graphs (dense random graphs, disconnected components, triangles, high-degree hubs) through the actual code and diffing expected vs. reconstructed edges — zero false positives across all cases tested.
 - **May not show every true edge as touching.** A term connected to more than 6 others (the hex grid's physical neighbor limit) or part of a tightly-closed cluster (e.g. a triangle) may end up with some of its edges not visually adjacent after reload, even though the relationship still existed in the source file.
 - **Terms with no edge at all can't round-trip.** The `.bee` format only carries the edge list, not isolated nodes — a hex with zero adjacent neighbors is dropped by Save and can never be restored by Load. This mirrors the CSV export's existing isolated-node behavior (see Edge Rules below), now extended to Save/Load too.
-- On success, also restores `contributor.label` into the Group field, and repopulates `edgePolarity` from any per-edge `effect` values in the file (matched back to the reconstructed hexes by term label).
+- On success, also restores `contributor.label` into the Group field. `data.dimensions` re-applies the three Edge Data parameters and syncs their checkboxes; when the block is absent, they are inferred conservatively (polarity from any `effect` ±1, magnitude from any `weight` in 1–3, direction only if some pair appears in both orders). `edgeData` is reset, then repopulated from each edge's `effect` → `polarity`, `weight` → `magnitude`, and edge order → `direction` (a pair seen in one order → forward/reverse; seen both ways → left unset).
 
 ### Export csv
-Downloads an **edge list** — `from,to` columns, RFC 4180 quoted, built from `adjacentTermPairs()` — matching the CEnTR\*CANON ingestion contract in `docs/apiary-output-specification.md`. If **any** edge is classified, a `polarity` column is added (`1` / `-1` for classified rows, empty for the rest); if none are, the column is omitted entirely (the acceptable `NO POLARITY` state). `weight` is always omitted (`NO WEIGHT`). Filename: `{slug}_{YYYY-MM-DD}.csv` (dated — a point-in-time deliverable, unlike Save).
+Downloads an **edge list** — `from,to` columns, RFC 4180 quoted, built from `adjacentTermPairs()` — matching the CEnTR\*CANON ingestion contract in `docs/apiary-output-specification.md`. Columns after `from,to` are `weight` / `polarity` / `direction` **in that order**, each present **iff its parameter is on** — even if every value is empty (a classified edge whose parameter is off exports with no column for that dimension; this changed from the interim polarity behaviour, which force-added the column whenever any edge was classified). `direction` is a constant `1` on every row; its **presence** flags directed mode (`from` = influencer, read from row order), and an unclassified pair emits two rows (one each way). Filename: `{slug}_{YYYY-MM-DD}.csv` (dated — a point-in-time deliverable, unlike Save).
 
-### Edge polarity classification
-Hovering (or clicking) the dot at the midpoint of any edge between two **labeled** hexes opens a small popup with `+` / `–` / `clear`. `+` stores `1`, `–` stores `-1`, `clear` removes the classification. Classified edges render a colored badge at the midpoint (green `--secondary` for `+`, plum `--serve` for `–`) in the `#edgeBadges` overlay group, which sits above `#hexes` so the badge stays visible even though the edge line itself is hidden under the two touching hexes. Unclassified edges show a faint grey dot as the affordance. Only `+` / `–` are offered — an explicit neutral (`0`) is not yet exposed; unclassified and neutral both currently export as "not characterized".
+### Edge data classification
+Three optional dimensions, each toggled by a checkbox in the **Edge Data** panel section (`--challenge` stripe, between Selected Hex and Adjacency): **Polarity** (`+` / `–`), **Magnitude** (`1`–`3`), **Direction** (influence). All default off — with all off there is no midpoint affordance and edges render as plain lines.
+
+Hovering (or clicking) the dot at the midpoint of any edge between two **labeled** hexes opens a popup with one row per enabled dimension, in **direction / polarity / magnitude** order. The direction row's buttons show the real term labels (`care → power` / `power → care`). Button values: `forward` / `reverse` / `1` / `-1` / `1` / `2` / `3` / `clear`.
+
+Badge rendering, all in the `#edgeBadges` overlay group (above `#hexes`, so badges survive the edge line being hidden under the two touching hexes):
+- **polarity** — colored `+` / `–` badge at the midpoint (green `--secondary` for `+`, plum `--serve` for `–`). Unchanged from the shipped feature.
+- **magnitude** — edge line `stroke-width` becomes `1.5 + magnitude`, plus the digit as a small `<text>` offset to `(mx + 12, my + 12)`.
+- **direction** — a `<polygon>` triangle at the midpoint pointing influencer → influenced, **only** for a stored forward/reverse (an unset/bidirectional pair keeps the plain grey affordance dot).
+
+An explicit neutral polarity (`0`) is still not exposed; unclassified and neutral both export as "not characterized".
 
 ---
 
@@ -140,8 +153,9 @@ Two-column responsive grid (CSS Grid): a 280px control panel on the left and the
 
 ## Extending the App
 
-- **Add a `weight` UI**: A range input or numeric field on the Selected Hex editor, stored as `h.weight` on the hex object. `adjacentTermPairs()`/the `.bee` export could then read edge weight from the average of the two adjacent hexes' weights, or from a separate edge data structure.
-- **Expose the neutral polarity state (`0`)**: `edgePolarity` and both exports already carry signed values; add a middle button to the edge popup and let the badge/CSV/`.bee` represent `0` distinctly from unclassified. The spec permits `0` (neutral / ambiguous).
+- **Expose the neutral polarity state (`0`)**: `edgeData`'s `polarity` field and both exports already carry signed values; add a middle button to the edge popup's polarity row and let the badge/CSV/`.bee` represent `0` distinctly from unclassified. The spec permits `0` (neutral / ambiguous).
+- **MICMAC (influence × dependence)** is a supported downstream when `collectDirection` + `collectMagnitude` are both on: the directed weighted edge list from `adjacentTermPairs()` / Export csv is a straight pivot into the influence matrix (`M[from][to] += weight`), built downstream — Apiary itself has no in-app matrix view.
+- **One-time confirm on enabling direction** (spec §11 D5, not shipped): turning `collectDirection` on when `edgeData` already has entries reinterprets existing polarity/magnitude marks from associative to causal. A `confirm()` on that checkbox transition would surface it; dropped as low-value polish.
 - **Multi-session load**: Allow loading a second `.bee` file to overlay a second contributor's map for comparison, rather than Load always replacing the canvas outright.
 - **Session-lossless save (optional, non-spec)**: Save/Load are edge-based by design (see Import / Export), so isolated hexes and exact positions/colors don't round-trip. If that's ever a problem in practice, the `.bee` format's `additionalProperties: true` would allow a non-standard extra field (e.g. `hexes`) carrying the full canvas snapshot alongside the standard `edges`, without breaking spec compliance for downstream consumers that only read `edges`/`contributor`.
 
@@ -150,6 +164,8 @@ Two-column responsive grid (CSS Grid): a 280px control panel on the left and the
 ## Project Context
 
 Apiary is part of the **CEnTRInnovations open tools ecosystem**. Its immediate downstream consumer is **Apiary Hive**, which gathers `.bee` files from multiple contributor Hives and consolidates their vocabulary into one canonical term set before handing off to **CEnTR\*CANON**'s `mod_gather` → `mod_cartography` pipeline. Apiary maps encode a single contributor's (or composite perspective's) relational understanding of CE-R vocabulary as an undirected graph — exported either as a `.bee` file (`contributor.label`/`contributor.id` + edges, for Apiary Hive) or as a CSV edge list (`from,to`, for direct CEnTR\*CANON ingestion per `docs/apiary-output-specification.md`).
+
+When the optional **direction** + **magnitude** dimensions are enabled, an Apiary map also serves **MICMAC** structural analysis (influence × dependence) downstream: the directed weighted edge list is pivoted straight into an influence matrix (`M[from][to] += weight`) by the consuming tool, not by Apiary.
 
 Related infrastructure: CEnTR\*MAP (spatial analysis), CEnTR\*SEEK (literature synthesis), CEnTR\*IMPACT (impact mapping), CAFE Lab (the coordinating research lab).
 
