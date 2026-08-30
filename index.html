@@ -494,10 +494,25 @@ let snapToGrid = true;
 let showGrid = false;
 let newColor = PALETTE[0];
 let dragging = null;
-// Edge polarity: { [edgeKey]: 1 | -1 }. Keyed on the sorted term-label pair (not
-// hex ids, which don't survive a Load) so classifications round-trip through
-// Save/Load and match how .bee/CSV identify edges. Absent key = unclassified.
-let edgePolarity = {};
+// Per-edge attributes: { [edgeKey]: { polarity?: 1|-1, magnitude?: 1|2|3, direction?: 'forward'|'reverse' } }
+// Keyed on the sorted term-label pair (not hex ids, which don't survive a Load) so
+// classifications round-trip through Save/Load. Absent key/field = unclassified.
+// direction 'forward' = first→second in edgeKey sort order; unset = bidirectional.
+let edgeData = {};
+function edgeField(key, field) {
+  const e = edgeData[key];
+  return e ? e[field] : undefined;
+}
+function setEdgeField(key, field, value) {
+  if (value === null || value === undefined) {
+    if (edgeData[key]) {
+      delete edgeData[key][field];
+      if (Object.keys(edgeData[key]).length === 0) delete edgeData[key];
+    }
+    return;
+  }
+  (edgeData[key] || (edgeData[key] = {}))[field] = value;
+}
 function edgeKey(labelA, labelB) {
   return [labelA, labelB].map(s => String(s || '').trim().toLowerCase()).sort().join(' ');
 }
@@ -620,7 +635,7 @@ function renderAdjacency() {
     const la = (ha.text || '').trim();
     const lb = (hb.text || '').trim();
     const classifiable = la && lb && la.toLowerCase() !== lb.toLowerCase();
-    const pol = classifiable ? edgePolarity[edgeKey(la, lb)] : undefined;
+    const pol = classifiable ? edgeField(edgeKey(la, lb), 'polarity') : undefined;
     const color = pol === 1 ? 'var(--secondary)' : pol === -1 ? 'var(--serve)' : 'rgba(62,59,53,0.20)';
 
     const line = svgEl('line', {
@@ -678,7 +693,7 @@ edgePop.querySelectorAll('button').forEach(btn => {
     if (!edgePopTarget) return;
     const k = edgeKey(edgePopTarget.la, edgePopTarget.lb);
     const v = parseInt(btn.dataset.pol, 10);
-    if (v === 1 || v === -1) edgePolarity[k] = v; else delete edgePolarity[k];
+    setEdgeField(k, 'polarity', (v === 1 || v === -1) ? v : null);
     edgePop.classList.remove('is-open');
     render();
   });
@@ -955,7 +970,7 @@ function adjacentTermPairs() {
     const to   = (hexes.find(h => h.id === b)?.text || '').trim();
     if (!from || !to || from === to) return;
     const pair = { from, to };
-    const pol = edgePolarity[edgeKey(from, to)];
+    const pol = edgeField(edgeKey(from, to), 'polarity');
     if (pol === 1 || pol === -1) pair.polarity = pol;
     pairs.push(pair);
   });
@@ -1003,11 +1018,11 @@ document.getElementById('btnSave').addEventListener('click', () => {
 // edge at all can't be represented — the .bee format only carries edges.
 function loadBeeData(data) {
   const edgesRaw = Array.isArray(data && data.edges) ? data.edges : [];
-  edgePolarity = {};
+  edgeData = {};
   edgesRaw.forEach(e => {
     const f = String((e && e.from) || '').trim();
     const t = String((e && e.to) || '').trim();
-    if (f && t && (e.effect === 1 || e.effect === -1)) edgePolarity[edgeKey(f, t)] = e.effect;
+    if (f && t && (e.effect === 1 || e.effect === -1)) setEdgeField(edgeKey(f, t), 'polarity', e.effect);
   });
   const adj = new Map();
   function ensureTerm(t) { if (!adj.has(t)) adj.set(t, new Set()); }
@@ -1137,22 +1152,28 @@ function demo() {
   ok(edgeKey('A', 'b') === edgeKey('B', 'a'), 'edgeKey is order/case-independent');
   ok(edgeKey('a b', 'c') !== edgeKey('a', 'b c'), 'edgeKey separator is collision-safe');
 
-  const savedHexes = hexes, savedPol = edgePolarity;
+  const savedHexes = hexes, savedData = edgeData;
   hexes = [
     { id: 1, text: 'alpha', x: 0, y: 0, size: 60 },
     { id: 2, text: 'beta',  x: 90, y: 0, size: 60 },
     { id: 3, text: 'gamma', x: 180, y: 0, size: 60 },
   ];
-  edgePolarity = { [edgeKey('alpha', 'beta')]: 1 };
+  edgeData = {};
+  setEdgeField(edgeKey('alpha', 'beta'), 'polarity', 1);
+  ok(edgeField(edgeKey('alpha', 'beta'), 'polarity') === 1, 'setEdgeField/edgeField round-trip');
+  setEdgeField(edgeKey('alpha', 'beta'), 'polarity', null);
+  ok(edgeData[edgeKey('alpha', 'beta')] === undefined, 'clearing the last field deletes the entry');
+  setEdgeField(edgeKey('alpha', 'beta'), 'polarity', 1);
+
   const pairs = adjacentTermPairs();
   ok(pairs.find(p => p.from === 'alpha' && p.to === 'beta').polarity === 1, 'classified pair carries polarity');
   ok(!('polarity' in pairs.find(p => p.to === 'gamma' || p.from === 'gamma')), 'unclassified pair omits polarity');
 
   loadBeeData({ edges: [{ from: 'alpha', to: 'beta', effect: -1 }, { from: 'beta', to: 'gamma' }] });
-  ok(edgePolarity[edgeKey('alpha', 'beta')] === -1, '.bee effect round-trips through loadBeeData');
-  ok(edgePolarity[edgeKey('beta', 'gamma')] === undefined, 'edge without effect stays unclassified');
+  ok(edgeField(edgeKey('alpha', 'beta'), 'polarity') === -1, '.bee effect round-trips through loadBeeData');
+  ok(edgeField(edgeKey('beta', 'gamma'), 'polarity') === undefined, 'edge without effect stays unclassified');
 
-  hexes = savedHexes; edgePolarity = savedPol;
+  hexes = savedHexes; edgeData = savedData;
   console.log('demo: all checks passed');
 }
 if (location.hash === '#test') demo();
