@@ -60,6 +60,9 @@ because it:
 - **Color-code** hexagons to represent categories, knowledge types, or 
   participant groups
 - **Drag and drop** to arrange tiles and surface adjacencies
+- **Icon suggestions** — label a hexagon and get semantically matched 
+  Material Symbol icons to place on the tile, turning each hexagon 
+  into an "idon" (idea + icon)
 - **Snap-to-grid** option for more structured layouts
 - **Adjacency tracking** to document which concepts participants connect
 - **Import/Export** as JSON or CSV for documentation, cross-session 
@@ -69,7 +72,9 @@ because it:
 
 ## Getting Started
 
-No installation required. Visit the [centrinnovations.github.io/hexagons](live app).
+No installation required. Visit the [centrinnovations.github.io/hexagons](live app). 
+(Icon suggestions download the embedding model on first use and cache 
+it; the rest of the app works fully offline.)
 
 To run locally:
 ```bash

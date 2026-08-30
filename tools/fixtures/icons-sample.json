@@ -1,0 +1,11 @@
+)]}'
+{"icons":[
+ {"name":"delete","categories":["Action"],"tags":["bin","can","garbage","remove","trash"],"unsupported_families":[]},
+ {"name":"groups","categories":["Social"],"tags":["people","team","crowd","community"],"unsupported_families":[]},
+ {"name":"android","categories":["Android"],"tags":["robot","mobile","device","os","operating system","platform","logo","brand","google"],"unsupported_families":[]},
+ {"name":"verified","categories":["Social"],"tags":["check","logo","approved","badge"],"unsupported_families":[]},
+ {"name":"blank_icon_no_tags","categories":["Action"],"tags":[],"unsupported_families":[]},
+ {"name":"home","categories":["Home"],"tags":["house","building","address","main"],"unsupported_families":[]},
+ {"name":"payments","categories":["Action"],"tags":["money","cash","pay","credit","card","bill"],"unsupported_families":[]},
+ {"name":"warning","categories":["Alert"],"tags":["caution","danger","alert","exclamation","attention"],"unsupported_families":[]}
+]}
