@@ -15,7 +15,7 @@ switched by a map-level on/off parameter:
 |---|---|---|
 | **polarity** | valence of the relation — `+` / `–` | no valence |
 | **magnitude** | strength of the relation — `1` / `2` / `3` | no strength |
-| **direction** | which term influences which — `→` / `←` / `↔` | undirected |
+| **direction** | which term influences which — `→` / `←` (unset = mutual) | undirected |
 
 All three default **off**. With all off, a map is exactly what it is today: an
 undirected, unweighted, unsigned adjacency graph. A facilitator turns on only the
@@ -65,7 +65,7 @@ influence × dependence). MICMAC needs `direction` + `magnitude`; it does not us
 Replace the global `edgePolarity = {}` with:
 
 ```js
-// { [edgeKey]: { polarity?: 1 | -1, magnitude?: 1 | 2 | 3, direction?: 'forward' | 'reverse' | 'both' } }
+// { [edgeKey]: { polarity?: 1 | -1, magnitude?: 1 | 2 | 3, direction?: 'forward' | 'reverse' } }
 let edgeData = {};
 ```
 
@@ -79,8 +79,11 @@ let edgeData = {};
 
 `direction` values are **relative to `edgeKey`'s sorted order**:
 `edgeKey` returns the pair as `[first, second]` (sorted). `'forward'` means
-`first → second`, `'reverse'` means `second → first`, `'both'` means mutual.
-A helper resolves this to real term labels at render/export time.
+`first → second`, `'reverse'` means `second → first`. **Unset means
+bidirectional** — there is no explicit `'both'` value, because an unclassified
+pair already exports as mutual (§7.2, D2), so a dedicated "both" state would be
+indistinguishable from the default. A helper resolves `forward`/`reverse` to
+real term labels at render/export time.
 
 ### 3.2 Alternatives rejected
 
@@ -157,10 +160,11 @@ The popup shows one row per enabled parameter:
 |---|---|---|
 | Polarity | `+` · `–` · `clear` | `polarity: 1 / -1 / (delete)` |
 | Magnitude | `1` · `2` · `3` · `clear` | `magnitude: 1 / 2 / 3 / (delete)` |
-| Direction | `A→B` · `B→A` · `A↔B` · `clear` | `direction: forward / reverse / both / (delete)` |
+| Direction | `A→B` · `B→A` · `clear` | `direction: forward / reverse / (delete)` |
 
 The Direction row labels show the two **actual term texts** (e.g. `care → power`)
-so "which way" is unambiguous. Row order: Direction, Polarity, Magnitude.
+so "which way" is unambiguous. `clear` returns the edge to the bidirectional
+default. Row order: Direction, Polarity, Magnitude.
 
 Popup open/close behavior (hover with grace timeout, click, `stopPropagation`
 on click to not add a hex) is unchanged from the shipped feature.
@@ -176,8 +180,10 @@ they survive the edge line being hidden under the two touching hexes).
   digit rendered in the midpoint badge.
 - **polarity** — colored badge as shipped: green `--secondary` `+`,
   plum `--serve` `–`.
-- **direction** — a chevron glyph in the midpoint badge pointing along the edge
-  toward the influenced term; a double-headed chevron for `both`.
+- **direction** — a chevron glyph in the midpoint badge pointing toward the
+  influenced term for `forward`/`reverse`. Unset with `collectDirection` on: the
+  plain affordance dot (its "unclassified" look already reads as "no arrow yet",
+  which is the bidirectional default).
 
 When more than one dimension is classified on an edge, the midpoint badge is a
 small horizontal pill: `[chevron] [± ] [digit]`, each part present only if set.
@@ -220,14 +226,15 @@ When `collectDirection` is **on**:
 - `from` is the **influencer**, `to` the **influenced**.
 - `direction: 'forward'` → one row `first,second,…,1`
 - `direction: 'reverse'` → one row `second,first,…,1`
-- `direction: 'both'` → **two rows**, `first,second,…,1` and `second,first,…,1`
-- **`direction` unset** → the pair is **dropped** from the export.
+- **`direction` unset** → **two rows**, `first,second,…,1` and `second,first,…,1`
 
-The drop rule is deliberate: with direction on, the map is an influence graph,
-and a touching pair with no assigned direction is not an influence claim. This
-mirrors the existing "isolated hexes are dropped" correctness-over-completeness
-stance (`CLAUDE.md` → Load, and §6 of the output spec). It is the most debatable
-decision here — see §11.
+An unclassified pair is assumed bidirectional rather than dropped: the adjacency
+itself is the contributor's assertion that the two terms relate, and absent an
+explicit arrow the conservative reading is mutual influence, not none. Every
+touching labeled pair therefore still exports — enabling `direction` never
+silently loses edges. `direction` stays `undefined` in `edgeData` (the store
+records only what the contributor set); the bidirectional default is applied at
+export time.
 
 Downstream builds the MICMAC matrix directly: `M[from][to] += weight`
 (weight defaulting to 1 when magnitude is off or the cell is blank).
@@ -257,8 +264,8 @@ Unchanged: `{slug}_{YYYY-MM-DD}.csv`.
 - `effect` — written per edge only when `collectPolarity` is on and the edge has
   a polarity. Unchanged from shipped behavior (`1` / `-1`).
 - **direction** — encoded by edge order and duplication, same rules as CSV §7.2:
-  `from` = influencer; `both` → two edge objects; unset → dropped when
-  `collectDirection` is on. When `collectDirection` is off, current arbitrary
+  `from` = influencer; `forward`/`reverse` → one edge object; unset → two edge
+  objects (one per direction). When `collectDirection` is off, current arbitrary
   order.
 
 Edges still come from `adjacentTermPairs()`. Filename unchanged: `{slug}.bee`.
@@ -278,8 +285,10 @@ Edges still come from `adjacentTermPairs()`. Filename unchanged: `{slug}.bee`.
 3. For each edge, populate `edgeData[edgeKey(from,to)]`:
    - `effect` (`1`/`-1`) → `polarity`
    - `weight` (`1`/`2`/`3`) → `magnitude` (ignore non-1..3 numbers)
-   - direction: first occurrence of an ordered pair → `forward`/`reverse`
-     relative to `edgeKey` order; seeing both orders for one pair → `both`
+   - direction: a pair seen in **one** order only → `forward`/`reverse` relative
+     to `edgeKey` order. A pair seen in **both** orders → leave `direction`
+     unset (the export default already round-trips it as bidirectional; there is
+     no need to distinguish "explicit both" from "unclassified").
 4. Layout is unchanged — it walks the **undirected** adjacency (`from`/`to` as an
    unordered pair), so direction never affects hex placement.
 
@@ -316,11 +325,12 @@ downstream.
 | # | Decision | Rationale | Risk |
 |---|---|---|---|
 | D1 | Parameters are whole-map, not per-edge | You never want half a map directed for one analysis | none |
-| D2 | With `collectDirection` on, undirected pairs are **dropped** from export | The map is an influence graph; no direction = no influence claim; matches isolated-hex behavior | A contributor who enables direction but forgets to classify some edges loses them silently — mitigate with a pre-export count ("12 of 18 edges have a direction; 6 will be omitted") |
+| D2 | With `collectDirection` on, an unclassified pair exports as **bidirectional** (two directed rows) | The adjacency is already an assertion that the terms relate; mutual influence is the conservative default; no edge is ever silently lost | Unclassified pairs contribute equal influence + dependence, nudging them toward the MICMAC diagonal (relay/autonomous) — acceptable and self-correcting as the contributor adds arrows. A pre-export note ("6 of 18 edges are unclassified; exported as bidirectional") keeps it visible |
 | D3 | Column present whenever its parameter is on, even if all-empty | The parameter is the explicit "considered" signal; removes the shipped feature's data-inferred column logic | Slightly more verbose CSV |
 | D4 | `magnitude` scale is `1–3`, no `0` | `0` = "no influence" = simply don't classify the edge; MICMAC convention | none |
 | D5 | Turning `collectDirection` on **reinterprets** existing polarity/magnitude from associative to causal meaning | Documented; the popup help text and badge are mode-neutral glyphs | A map built associatively then switched to causal carries marks whose meaning changed — add a one-time confirm on enabling `direction` when `edgeData` is non-empty |
-| D6 | `both` emits two rows / two edge objects | MICMAC matrix wants directed cells; two mutual cells is the honest encoding | Doubles a mutual edge's weight contribution to cluster metrics — acceptable, and correct for influence/dependence |
+| D6 | Bidirectional (unset) emits two rows / two edge objects | MICMAC matrix wants directed cells; two mutual cells is the honest encoding | Doubles a mutual edge's weight contribution to cluster metrics — acceptable, and correct for influence/dependence |
+| D8 | No explicit `'both'` value — only `forward` / `reverse` / unset | Unset already means bidirectional (D2); an explicit "both" would be indistinguishable on export and on reload | On reload, a pair present in both orders collapses to unset rather than a distinct "confirmed mutual" state — no functional loss |
 | D7 | Direction stored relative to `edgeKey` sort order, not raw hex order | Keeps the label-keyed, Save/Load-stable design | Helper indirection at render/export |
 
 ---
@@ -347,8 +357,8 @@ Extend `demo()` (runs on `#test`):
   object → `loadBeeData()`.
 - CSV header reflects exactly the enabled parameters; a parameter on with zero
   classified edges still emits its (empty) column.
-- Direction: `forward` → one ordered row; `both` → two rows; unset + direction on
-  → row absent.
+- Direction: `forward` → one ordered row (`from` = influencer); unset + direction
+  on → two rows, one each way; `collectDirection` off → one row, sorted order.
 - `dimensions` block written to `.bee` and re-applied on load (checkboxes + globals).
 - `edgeKey`-relative direction resolves to the correct term labels regardless of
   hex id order.
@@ -365,7 +375,7 @@ Manual: open in browser, enable each toggle, classify an edge, export, reload.
 | `index.html` — globals (~L494) | `edgeData`, `collect*` flags; rename from `edgePolarity` |
 | `index.html` — `renderAdjacency()` edge block (~L613) | Read `edgeData`; badge pill for direction/polarity/magnitude; magnitude → stroke-width |
 | `index.html` — edge popup (markup ~L475, JS ~L661) | Rows per enabled parameter; direction row with term labels |
-| `index.html` — `adjacentTermPairs()` (~L948) | Attach `polarity` / `weight` / direction; apply the direction drop + duplicate rules |
+| `index.html` — `adjacentTermPairs()` (~L948) | Attach `polarity` / `weight` / direction; apply the bidirectional-default row-duplication rule |
 | `index.html` — `btnExportCSV` (~L965) | Column set from `collect*`; direction ordering |
 | `index.html` — `btnSave` (~L979) | `dimensions` block; `weight`; direction ordering |
 | `index.html` — `loadBeeData()` (~L1090) | Reset + repopulate `edgeData`; apply `dimensions`; sync checkboxes |
