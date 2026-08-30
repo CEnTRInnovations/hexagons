@@ -741,7 +741,7 @@ function renderSelectedEditor() {
     }
     if (iconEngineState === 'failed') {
       const s = document.createElement('span');
-      s.className = 'a-muted'; s.textContent = 'icon suggestions unavailable';
+      s.className = 'a-muted'; s.textContent = 'icon suggestions unavailable — needs an internet connection the first time';
       iconWrap.appendChild(s); return;
     }
     (list || []).forEach(name => {
@@ -1130,11 +1130,7 @@ let _iconEngineReady = null; // Promise
 
 async function _loadIconEngine() {
   const base = new URL('.', document.baseURI);
-  const { pipeline, env } = await import(new URL('vendor/transformers/transformers.min.js', base));
-  env.allowRemoteModels = false;
-  env.allowLocalModels = true;
-  env.localModelPath = new URL('vendor/transformers/models/', base).href;
-  env.backends.onnx.wasm.wasmPaths = new URL('vendor/transformers/', base).href;
+  const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6');
 
   const meta = await fetch(new URL('vendor/icon-names.json', base)).then(r => {
     if (!r.ok) throw new Error('icon-names.json ' + r.status);

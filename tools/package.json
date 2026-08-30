@@ -6,8 +6,7 @@
   "scripts": {
     "test": "node --test",
     "catalog": "node fetch-icon-catalog.mjs",
-    "build": "node build-icon-embeddings.mjs",
-    "vendor": "node vendor-model.mjs"
+    "build": "node build-icon-embeddings.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "3.7.6"

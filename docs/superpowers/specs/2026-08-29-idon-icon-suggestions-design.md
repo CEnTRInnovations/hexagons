@@ -66,10 +66,14 @@ separate decision to be made after trying it in a real session.
 
 ```
 [offline, one-time]              [in repo, static]            [runtime, lazy]
-tools/build-icon-embeddings.mjs  vendor/icon-vectors.bin      embed(label)
-  fetch Google Fonts metadata  → vendor/icon-names.json     → cosine vs matrix
-  filter + embed + quantize      vendor/transformers/…       → top 5 icons
+tools/build-icon-embeddings.mjs  vendor/icon-vectors.bin      import transformers.js (CDN)
+  fetch Google Fonts metadata  → vendor/icon-names.json     → model auto-fetched (huggingface.co)
+  filter + embed + quantize                                 → embed(label)
+                                                            → cosine vs matrix → top 5 icons
 ```
+
+transformers.js and the MiniLM model are **not vendored** — they load from CDN
+(`cdn.jsdelivr.net` + `huggingface.co`) on the first suggestion request.
 
 The runtime model and corpus load **only on first suggestion request**, not on
 page load.
@@ -110,12 +114,19 @@ Model choice is MiniLM-L6 for size (~6 MB q8). `bge-small-en-v1.5` is a
 drop-in upgrade for quality at ~2× params if MiniLM proves too weak — it only
 changes the `build` script's model id and requires re-running the build.
 
-### C2 — Vendored runtime library
+### C2 — Runtime library (CDN)
 
-- `vendor/transformers/transformers.min.js` — pinned transformers.js build.
-- `vendor/transformers/models/Xenova/all-MiniLM-L6-v2/…` — the quantised ONNX
-  model + tokenizer files, so nothing is fetched from a CDN at runtime.
-- Pin the exact version; record it in the vendor dir README.
+- transformers.js is imported at runtime from
+  `https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6` (version pinned
+  in the import URL).
+- The quantised MiniLM ONNX model + tokenizer files are auto-fetched by
+  transformers.js from its default host, `huggingface.co`.
+- The ONNX-Runtime WASM is fetched from the jsDelivr package.
+- No env overrides — transformers.js uses its default remote hosts.
+- All of this loads only on the first suggestion request. If any of it is
+  unreachable, `_ensureIconEngine()` hits its timeout/catch and the feature
+  enters the `failed` state; the rest of the app is unaffected. Once loaded, the
+  browser HTTP cache serves the model on subsequent requests without network.
 
 ### C3 — Runtime suggestion module (new code in `index.html`)
 
@@ -185,8 +196,9 @@ label text
 ## Error handling
 
 - **Model / library fails to load** (offline, blocked, WASM unsupported):
-  catch, show "icon suggestions unavailable" once in the panel, disable the
-  Suggest button for the session. Base app unaffected.
+  catch, show "icon suggestions unavailable — needs an internet connection the
+  first time" once in the panel, disable the Suggest button for the session.
+  Base app unaffected. This is the expected path when the CDN is unreachable.
 - **`icon-vectors.bin` fetch fails:** same treatment.
 - **Embedding throws on a pathological label** (empty, whitespace, huge):
   guard — skip suggestion for empty/whitespace, truncate labels to ~200 chars

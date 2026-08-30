@@ -349,6 +349,8 @@ git commit -m "feat: build quantised Material Symbols embedding corpus"
 
 ### Task 3: Vendor transformers.js + the model for offline runtime use
 
+> **SUPERSEDED** — the vendored-binary approach was replaced by runtime CDN loading (see the design spec's C2). This task's files (vendor/transformers/, tools/vendor-model.mjs, tools/test-vendored-runtime.mjs) were removed.
+
 **Files:**
 - Create: `tools/vendor-model.mjs`
 - Create: `vendor/transformers/README.md`
