@@ -86,10 +86,14 @@ the icon set.
   `categories`, `tags`). `tags` are hand-authored synonyms
   (e.g. `delete` → `bin, can, garbage, remove, trash`).
 - **Filter** (programmatic only, no manual curation):
-  - drop `categories` containing `brand` or `social`
+  - drop icons whose `tags` contain both `logo` and `brand` (case-insensitive) —
+    i.e. brand/logo marks only; the `Social` category is deliberately KEPT
+    (`groups`, `share`, `diversity_3` are top hits for facilitation vocabulary)
   - drop icons with an empty `tags` array
-  - dedupe filled/outlined/weight variants to the base `name`
-  - expected result ≈ 1500 icons
+  - no category-based filtering
+  - expected result ≈ 4214 icons. (The earlier "≈ 1500" estimate assumed
+    fill-variant dedup that this data source doesn't need, plus the now-retained
+    `social` category.)
 - **Embed:** for each icon, build the string
   `"{name humanised}. {tags joined by ', '}. {categories joined by ', '}"`
   and embed with `Xenova/all-MiniLM-L6-v2` (384-dim). Run transformers.js

@@ -656,6 +656,7 @@ function renderHex(h) {
       x: h.x, y: cursorY + iconSize * 0.5,
       'text-anchor': 'middle', 'dominant-baseline': 'central',
       'font-family': '"Material Symbols Outlined"',
+      'font-feature-settings': "'liga'",
       'font-size': iconSize,
       fill: textColor,
       'pointer-events': 'none'
@@ -684,19 +685,12 @@ function renderHex(h) {
   return g;
 }
 
-function render() {
+function render(skipEditor) {
   gHex.innerHTML = '';
   hexes.forEach(h => gHex.appendChild(renderHex(h)));
   renderGrid();
   renderAdjacency();
-  renderSelectedEditor();
-}
-
-function renderCanvasOnly() {
-  gHex.innerHTML = '';
-  hexes.forEach(h => gHex.appendChild(renderHex(h)));
-  renderGrid();
-  renderAdjacency();
+  if (!skipEditor) renderSelectedEditor();
 }
 
 // ─── Selected editor ──────────────────────────────────────────────────────────
@@ -715,7 +709,7 @@ function renderSelectedEditor() {
   tLabel.textContent = 'Text';
   const tInput = document.createElement('input');
   tInput.type = 'text'; tInput.value = h.text; tInput.style.flex = '1';
-  tInput.addEventListener('input', () => { h.text = tInput.value; renderCanvasOnly(); });
+  tInput.addEventListener('input', () => { h.text = tInput.value; render(true); });
   textRow.appendChild(tLabel); textRow.appendChild(tInput);
   div.appendChild(textRow);
 
@@ -729,6 +723,17 @@ function renderSelectedEditor() {
 
   function paintIcons(list) {
     iconWrap.innerHTML = '';
+    if (h.icon) {
+      const cur = document.createElement('span');
+      cur.className = 'material-symbols-outlined active';
+      cur.textContent = h.icon; cur.title = h.icon;
+      iconWrap.appendChild(cur);
+      const x = document.createElement('span');
+      x.className = 'material-symbols-outlined a-icon-clear';
+      x.textContent = 'close'; x.title = 'Remove icon';
+      x.addEventListener('click', () => { delete h.icon; render(); });
+      iconWrap.appendChild(x);
+    }
     if (iconEngineState === 'loading') {
       const s = document.createElement('span');
       s.className = 'a-muted'; s.textContent = 'loading suggestions…';
@@ -739,12 +744,6 @@ function renderSelectedEditor() {
       s.className = 'a-muted'; s.textContent = 'icon suggestions unavailable';
       iconWrap.appendChild(s); return;
     }
-    if (h.icon) {
-      const cur = document.createElement('span');
-      cur.className = 'material-symbols-outlined active';
-      cur.textContent = h.icon; cur.title = h.icon;
-      iconWrap.appendChild(cur);
-    }
     (list || []).forEach(name => {
       if (name === h.icon) return;
       const g = document.createElement('span');
@@ -753,13 +752,6 @@ function renderSelectedEditor() {
       g.addEventListener('click', () => { h.icon = name; render(); });
       iconWrap.appendChild(g);
     });
-    if (h.icon) {
-      const x = document.createElement('span');
-      x.className = 'material-symbols-outlined a-icon-clear';
-      x.textContent = 'close'; x.title = 'Remove icon';
-      x.addEventListener('click', () => { delete h.icon; render(); });
-      iconWrap.appendChild(x);
-    }
     if (!list || !list.length) {
       if (iconRan && Array.isArray(list) && h.text.trim() && iconEngineState === 'ready') {
         const s = document.createElement('span');
@@ -1153,6 +1145,7 @@ async function _loadIconEngine() {
     return r.arrayBuffer();
   });
   const raw = new Int8Array(buf);
+  if (raw.length !== meta.count * meta.dim) throw new Error('corpus size mismatch: ' + raw.length + ' != ' + (meta.count * meta.dim));
   const matrix = new Float32Array(raw.length);
   for (let i = 0; i < raw.length; i++) matrix[i] = raw[i] / meta.scale;
 
@@ -1163,7 +1156,8 @@ async function _loadIconEngine() {
 function _ensureIconEngine() {
   if (!_iconEngineReady) {
     _setIconEngineState('loading');
-    _iconEngineReady = _loadIconEngine()
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('icon engine load timed out')), 60000));
+    _iconEngineReady = Promise.race([_loadIconEngine(), timeout])
       .then(() => _setIconEngineState('ready'))
       .catch(err => { console.error('icon engine failed', err); _setIconEngineState('failed'); throw err; });
   }
