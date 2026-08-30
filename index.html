@@ -496,7 +496,7 @@
         <g id="edgeBadges"></g>
       </svg>
     </div>
-    <div class="a-hint">Click to add · Drag to move · Del to remove · Hover an edge to mark + / –</div>
+    <div class="a-hint">Click to add · Drag to move · Del to remove · Enable Edge Data to classify edges</div>
     <div id="edgePop" class="a-edge-pop"></div>
   </div>
 
@@ -546,7 +546,7 @@ function resolveDirectionChoice(la, lb, choice) {
 }
 // Original-case labels ordered by lowercased value — same criterion as edgeKey.
 function orderedLabels(la, lb) {
-  return [la, lb].slice().sort((a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : 1);
+  return [la, lb].slice().sort((a, b) => a.trim().toLowerCase() < b.trim().toLowerCase() ? -1 : 1);
 }
 // [ [fromLabel, toLabel], ... ] in influence order. Unset direction = bidirectional (two rows).
 function influenceRows(la, lb) {
@@ -678,9 +678,9 @@ function renderAdjacency() {
     const la = (ha.text || '').trim();
     const lb = (hb.text || '').trim();
     const classifiable = la && lb && la.toLowerCase() !== lb.toLowerCase();
-    const pol = classifiable ? edgeField(edgeKey(la, lb), 'polarity') : undefined;
-    const mag = classifiable ? edgeField(edgeKey(la, lb), 'magnitude') : undefined;
-    const dir = classifiable ? edgeField(edgeKey(la, lb), 'direction') : undefined;
+    const pol = classifiable && collectPolarity  ? edgeField(edgeKey(la, lb), 'polarity')  : undefined;
+    const mag = classifiable && collectMagnitude ? edgeField(edgeKey(la, lb), 'magnitude') : undefined;
+    const dir = classifiable && collectDirection ? edgeField(edgeKey(la, lb), 'direction') : undefined;
     const color = pol === 1 ? 'var(--secondary)' : pol === -1 ? 'var(--serve)' : 'rgba(62,59,53,0.20)';
 
     const line = svgEl('line', {
@@ -1409,6 +1409,8 @@ function demo() {
 
   // Task 6: exports
   const s6 = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
+  const s6label = document.getElementById('contributorLabelInput').value;
+  const s6ids = [nextId, selectedId];
   hexes = [{ id: 1, text: 'a', color: '#3B6B35', x: 0, y: 0, size: 60 }, { id: 2, text: 'b', color: '#3B6B35', x: 100, y: 0, size: 60 }, { id: 3, text: 'c', color: '#3B6B35', x: 200, y: 0, size: 60 }];
   edgeData = {};
   setEdgeField(edgeKey('a', 'b'), 'polarity', 1);
@@ -1418,11 +1420,12 @@ function demo() {
 
   const cap = [];
   const RealBlob = window.Blob;
+  const realDl = dl; dl = () => {};
   window.Blob = function (parts, opts) { cap.push(String(parts[0])); return new RealBlob(parts, opts); };
   document.getElementById('contributorLabelInput').value = 'G';
   document.getElementById('btnExportCSV').click();
   document.getElementById('btnSave').click();
-  window.Blob = RealBlob;
+  dl = realDl; window.Blob = RealBlob;
 
   const csv = cap[0].split('\r\n');
   ok(csv[0] === 'from,to,weight,polarity,direction', 'CSV header has all three columns in order');
@@ -1436,9 +1439,13 @@ function demo() {
   ok(bee.edges.filter(e => (e.from === 'b' && e.to === 'c') || (e.from === 'c' && e.to === 'b')).length === 2, '.bee b–c unclassified → two directed edges');
 
   [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = s6;
+  document.getElementById('contributorLabelInput').value = s6label;
+  [nextId, selectedId] = s6ids;
 
   // Task 7: import round-trip
   const s7 = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
+  const s7label = document.getElementById('contributorLabelInput').value;
+  const s7ids = [nextId, selectedId];
   loadBeeData({
     contributor: { label: 'RT' },
     dimensions: { polarity: true, magnitude: true, direction: true },
@@ -1454,7 +1461,20 @@ function demo() {
   ok(edgeField(edgeKey('x', 'y'), 'direction') === (['x','y'].sort()[0] === 'x' ? 'forward' : 'reverse'), 'single-order edge → forward/reverse');
   ok(edgeField(edgeKey('y', 'z'), 'direction') === undefined, 'edge seen both ways → direction left unset');
   [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = s7;
+  document.getElementById('contributorLabelInput').value = s7label;
+  [nextId, selectedId] = s7ids;
   syncDimensionCheckboxes();
+
+  // FIX 1: rendering gated by the individual collect* flags
+  const s8 = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
+  hexes = [{ id: 1, text: 'care', color: '#3B6B35', x: 0, y: 0, size: 60 }, { id: 2, text: 'power', color: '#3B6B35', x: 100, y: 0, size: 60 }];
+  edgeData = {}; collectPolarity = false; collectMagnitude = true; collectDirection = false;
+  setEdgeField(edgeKey('care', 'power'), 'polarity', 1);
+  render();
+  ok(document.getElementById('edges').querySelector('line').getAttribute('stroke-dasharray') === '4 3', 'stored polarity with collectPolarity off → plain dashed line');
+  ok(![...document.getElementById('edgeBadges').querySelectorAll('text')].some(t => t.textContent === '+' || t.textContent === '–'), 'no +/- badge when collectPolarity off');
+  [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = s8;
+  syncDimensionCheckboxes(); render();
 
   console.log('demo: all checks passed');
 }

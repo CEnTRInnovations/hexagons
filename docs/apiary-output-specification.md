@@ -356,7 +356,10 @@ Key differences from the CSV contract:
   the contributor had on. On Load, Apiary re-applies these; a `.bee` file
   without a `dimensions` block is read with conservative inference (polarity
   from any `effect` of ±1, magnitude from any `weight` in 1–3, direction only
-  if a term pair appears in both orders).
+  if a term pair appears in both orders). Note that `dimensions` is an
+  Apiary-specific extension: the current `bee-file-spec.json` does not define
+  it and Apiary Hive ignores it today. It is legal only because the spec sets
+  `additionalProperties: true`.
 - `weight` is written per edge **only when the magnitude parameter is on and
   that edge has a magnitude** (`1` / `2` / `3`); otherwise omitted (defaults
   to `1` on ingest). `effect` (the `.bee` equivalent of CSV `polarity`) is
