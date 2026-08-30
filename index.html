@@ -971,6 +971,11 @@ document.getElementById('snap').addEventListener('change', e => { snapToGrid = e
  ['collectDirection', v => collectDirection = v]].forEach(([id, set]) => {
   document.getElementById(id).addEventListener('change', e => { set(e.target.checked); render(); });
 });
+function syncDimensionCheckboxes() {
+  document.getElementById('collectPolarity').checked = collectPolarity;
+  document.getElementById('collectMagnitude').checked = collectMagnitude;
+  document.getElementById('collectDirection').checked = collectDirection;
+}
 
 // ─── Canvas coords ────────────────────────────────────────────────────────────
 function svgCoords(e) {
@@ -1163,11 +1168,46 @@ document.getElementById('btnSave').addEventListener('click', () => {
 function loadBeeData(data) {
   const edgesRaw = Array.isArray(data && data.edges) ? data.edges : [];
   edgeData = {};
+
+  const dims = data && data.dimensions;
+  if (dims && typeof dims === 'object') {
+    collectPolarity  = !!dims.polarity;
+    collectMagnitude = !!dims.magnitude;
+    collectDirection = !!dims.direction;
+  } else {
+    // No dimensions block: infer conservatively.
+    collectPolarity  = edgesRaw.some(e => e && (e.effect === 1 || e.effect === -1));
+    collectMagnitude = edgesRaw.some(e => e && [1, 2, 3].includes(e.weight));
+    const seen = new Set();
+    collectDirection = edgesRaw.some(e => {
+      if (!e || !e.from || !e.to) return false;
+      const k = edgeKey(String(e.from).trim(), String(e.to).trim());
+      const dirKey = k + '|' + (String(e.from).trim().toLowerCase() < String(e.to).trim().toLowerCase() ? 'f' : 'r');
+      if (seen.has(k) && !seen.has(dirKey)) return true; // same pair, opposite order → directed data present
+      seen.add(k); seen.add(dirKey);
+      return false;
+    });
+  }
+
+  const dirSeen = {}; // edgeKey → Set of 'forward'/'reverse'
   edgesRaw.forEach(e => {
     const f = String((e && e.from) || '').trim();
     const t = String((e && e.to) || '').trim();
-    if (f && t && (e.effect === 1 || e.effect === -1)) setEdgeField(edgeKey(f, t), 'polarity', e.effect);
+    if (!f || !t || f.toLowerCase() === t.toLowerCase()) return;
+    const k = edgeKey(f, t);
+    if (e.effect === 1 || e.effect === -1) setEdgeField(k, 'polarity', e.effect);
+    if ([1, 2, 3].includes(e.weight)) setEdgeField(k, 'magnitude', e.weight);
+    const order = f.toLowerCase() < t.toLowerCase() ? 'forward' : 'reverse';
+    (dirSeen[k] || (dirSeen[k] = new Set())).add(order);
   });
+  if (collectDirection) {
+    Object.entries(dirSeen).forEach(([k, orders]) => {
+      if (orders.size === 1) setEdgeField(k, 'direction', [...orders][0]);
+      // size 2 (both orders) → leave unset = bidirectional
+    });
+  }
+
+  syncDimensionCheckboxes();
   const adj = new Map();
   function ensureTerm(t) { if (!adj.has(t)) adj.set(t, new Set()); }
   edgesRaw.forEach(e => {
@@ -1394,6 +1434,25 @@ function demo() {
   ok(bee.edges.filter(e => (e.from === 'b' && e.to === 'c') || (e.from === 'c' && e.to === 'b')).length === 2, '.bee b–c unclassified → two directed edges');
 
   [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = s6;
+
+  // Task 7: import round-trip
+  const s7 = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
+  loadBeeData({
+    contributor: { label: 'RT' },
+    dimensions: { polarity: true, magnitude: true, direction: true },
+    edges: [
+      { from: 'x', to: 'y', effect: -1, weight: 3 },  // x→y only
+      { from: 'y', to: 'z' }, { from: 'z', to: 'y' }, // mutual
+    ],
+  });
+  ok(collectPolarity && collectMagnitude && collectDirection, 'dimensions block re-applies the three flags');
+  ok(document.getElementById('collectMagnitude').checked === true, 'checkbox synced from dimensions');
+  ok(edgeField(edgeKey('x', 'y'), 'polarity') === -1, 'effect → polarity on import');
+  ok(edgeField(edgeKey('x', 'y'), 'magnitude') === 3, 'weight → magnitude on import');
+  ok(edgeField(edgeKey('x', 'y'), 'direction') === (['x','y'].sort()[0] === 'x' ? 'forward' : 'reverse'), 'single-order edge → forward/reverse');
+  ok(edgeField(edgeKey('y', 'z'), 'direction') === undefined, 'edge seen both ways → direction left unset');
+  [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = s7;
+  syncDimensionCheckboxes();
 
   console.log('demo: all checks passed');
 }
