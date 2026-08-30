@@ -1082,20 +1082,33 @@ function slugify(label) {
 function getContributorLabel() {
   return document.getElementById('contributorLabelInput').value.trim();
 }
-// Adjacent, labeled, non-self-loop hex pairs as {from,to} — the shared edge source
-// for both the CSV export and the .bee save.
+// Adjacent, labeled, non-self-loop term pairs, expanded to directed rows when
+// collectDirection is on (influencer = from; unset direction = two rows). Carries
+// polarity/weight when their parameter is on. Shared source for CSV + .bee.
 function adjacentTermPairs() {
-  const pairs = [];
+  const out = [];
+  let total = 0, undirected = 0;
   getAdjacent().forEach(([a, b]) => {
-    const from = (hexes.find(h => h.id === a)?.text || '').trim();
-    const to   = (hexes.find(h => h.id === b)?.text || '').trim();
-    if (!from || !to || from === to) return;
-    const pair = { from, to };
-    const pol = edgeField(edgeKey(from, to), 'polarity');
-    if (pol === 1 || pol === -1) pair.polarity = pol;
-    pairs.push(pair);
+    const la = (hexes.find(h => h.id === a)?.text || '').trim();
+    const lb = (hexes.find(h => h.id === b)?.text || '').trim();
+    if (!la || !lb || la.toLowerCase() === lb.toLowerCase()) return;
+    const k = edgeKey(la, lb);
+    const pol = edgeField(k, 'polarity');
+    const mag = edgeField(k, 'magnitude');
+    total++;
+    if (collectDirection && edgeField(k, 'direction') === undefined) undirected++;
+    const rows = collectDirection ? influenceRows(la, lb) : [[la, lb]];
+    rows.forEach(([from, to]) => {
+      const row = { from, to };
+      if (collectPolarity && (pol === 1 || pol === -1)) row.polarity = pol;
+      if (collectMagnitude && (mag === 1 || mag === 2 || mag === 3)) row.weight = mag;
+      out.push(row);
+    });
   });
-  return pairs;
+  if (collectDirection && undirected > 0) {
+    console.info(`${undirected} of ${total} edges are unclassified; exported as bidirectional`);
+  }
+  return out;
 }
 
 document.getElementById('btnExportCSV').addEventListener('click', () => {
@@ -1103,12 +1116,20 @@ document.getElementById('btnExportCSV').addEventListener('click', () => {
   const date = new Date().toISOString().slice(0, 10);
   const pairs = adjacentTermPairs();
   if (pairs.length === 0) { alert('No adjacent labeled pairs to export.'); return; }
-  const withPol = pairs.some(p => p.polarity === 1 || p.polarity === -1);
-  const header = withPol ? 'from,to,polarity' : 'from,to';
-  const lines = [header, ...pairs.map(p => {
-    const base = `${csvField(p.from)},${csvField(p.to)}`;
-    return withPol ? `${base},${p.polarity === 1 || p.polarity === -1 ? p.polarity : ''}` : base;
-  })];
+
+  const cols = ['from', 'to'];
+  if (collectMagnitude) cols.push('weight');
+  if (collectPolarity)  cols.push('polarity');
+  if (collectDirection) cols.push('direction');
+
+  const lines = [cols.join(',')];
+  pairs.forEach(p => {
+    const cells = [csvField(p.from), csvField(p.to)];
+    if (collectMagnitude) cells.push(p.weight ?? '');
+    if (collectPolarity)  cells.push(p.polarity ?? '');
+    if (collectDirection) cells.push('1');
+    lines.push(cells.join(','));
+  });
   dl(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `${slug}_${date}.csv`);
 });
 
@@ -1119,9 +1140,11 @@ document.getElementById('btnSave').addEventListener('click', () => {
   const bee = {
     version: '1.0',
     contributor: { label, id: hashId(label) },
+    dimensions: { polarity: collectPolarity, magnitude: collectMagnitude, direction: collectDirection },
     edges: pairs.map(p => {
       const e = { from: p.from, to: p.to };
-      if (p.polarity === 1 || p.polarity === -1) e.effect = p.polarity;
+      if ('weight' in p) e.weight = p.weight;
+      if ('polarity' in p) e.effect = p.polarity;
       return e;
     }),
   };
@@ -1286,9 +1309,11 @@ function demo() {
   ok(edgeData[edgeKey('alpha', 'beta')] === undefined, 'clearing the last field deletes the entry');
   setEdgeField(edgeKey('alpha', 'beta'), 'polarity', 1);
 
+  const savedPol1 = collectPolarity; collectPolarity = true;
   const pairs = adjacentTermPairs();
   ok(pairs.find(p => p.from === 'alpha' && p.to === 'beta').polarity === 1, 'classified pair carries polarity');
   ok(!('polarity' in pairs.find(p => p.to === 'gamma' || p.from === 'gamma')), 'unclassified pair omits polarity');
+  collectPolarity = savedPol1;
 
   loadBeeData({ edges: [{ from: 'alpha', to: 'beta', effect: -1 }, { from: 'beta', to: 'gamma' }] });
   ok(edgeField(edgeKey('alpha', 'beta'), 'polarity') === -1, '.bee effect round-trips through loadBeeData');
@@ -1339,6 +1364,36 @@ function demo() {
   render();
   ok(document.getElementById('edgeBadges').querySelector('polygon') !== null, 'direction marker rendered');
   hexes = savedHexes5; edgeData = savedData5; collectDirection = savedDir; render();
+
+  // Task 6: exports
+  const s6 = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
+  hexes = [{ id: 1, text: 'a', color: '#3B6B35', x: 0, y: 0, size: 60 }, { id: 2, text: 'b', color: '#3B6B35', x: 100, y: 0, size: 60 }, { id: 3, text: 'c', color: '#3B6B35', x: 200, y: 0, size: 60 }];
+  edgeData = {};
+  setEdgeField(edgeKey('a', 'b'), 'polarity', 1);
+  setEdgeField(edgeKey('a', 'b'), 'magnitude', 2);
+  setEdgeField(edgeKey('a', 'b'), 'direction', 'forward'); // a→b
+  collectPolarity = collectMagnitude = collectDirection = true;
+
+  const cap = [];
+  const RealBlob = window.Blob;
+  window.Blob = function (parts, opts) { cap.push(String(parts[0])); return new RealBlob(parts, opts); };
+  document.getElementById('contributorLabelInput').value = 'G';
+  document.getElementById('btnExportCSV').click();
+  document.getElementById('btnSave').click();
+  window.Blob = RealBlob;
+
+  const csv = cap[0].split('\r\n');
+  ok(csv[0] === 'from,to,weight,polarity,direction', 'CSV header has all three columns in order');
+  ok(csv.includes('a,b,2,1,1'), 'a→b row: weight 2, polarity 1, direction flag 1');
+  ok(csv.includes('b,c,,,1') && csv.includes('c,b,,,1'), 'b–c unclassified direction → two bidirectional rows');
+
+  const bee = JSON.parse(cap[1]);
+  ok(JSON.stringify(bee.dimensions) === JSON.stringify({ polarity: true, magnitude: true, direction: true }), '.bee dimensions block written');
+  const ab = bee.edges.find(e => e.from === 'a' && e.to === 'b');
+  ok(ab.weight === 2 && ab.effect === 1, '.bee a→b edge carries weight and effect');
+  ok(bee.edges.filter(e => (e.from === 'b' && e.to === 'c') || (e.from === 'c' && e.to === 'b')).length === 2, '.bee b–c unclassified → two directed edges');
+
+  [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = s6;
 
   console.log('demo: all checks passed');
 }
