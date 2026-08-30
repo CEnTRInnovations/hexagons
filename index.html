@@ -425,6 +425,8 @@
       <input id="newText" type="text" placeholder="Type and click canvas to add" style="margin-bottom:0.75rem" />
       <label class="a-label">Color</label>
       <div id="newColorSwatches" class="a-swatches"></div>
+      <label class="a-label">Icon</label>
+      <div id="newIconSuggestions" class="a-icon-suggestions"></div>
     </div>
 
     <hr class="a-section-divider" />
@@ -502,6 +504,7 @@ let hexSize = 60;
 let snapToGrid = true;
 let showGrid = false;
 let newColor = PALETTE[0];
+let newIcon = null; // icon applied to the next hex added from the New Hexagon section
 let dragging = null;
 // Edge polarity: { [edgeKey]: 1 | -1 }. Keyed on the sorted term-label pair (not
 // hex ids, which don't survive a Load) so classifications round-trip through
@@ -821,75 +824,18 @@ function renderSelectedEditor() {
   const iconWrap = document.createElement('div');
   iconWrap.className = 'a-icon-suggestions';
   div.appendChild(iconWrap);
-
-  let iconReqToken = 0;
-  let iconRan = false; // has a suggest request completed for the current label?
-
-  function paintIcons(list) {
-    iconWrap.innerHTML = '';
-    if (h.icon) {
-      const cur = document.createElement('span');
-      cur.className = 'material-symbols-outlined active';
-      cur.textContent = h.icon; cur.title = h.icon;
-      iconWrap.appendChild(cur);
-      const x = document.createElement('span');
-      x.className = 'material-symbols-outlined a-icon-clear';
-      x.textContent = 'close'; x.title = 'Remove icon';
-      x.addEventListener('click', () => { delete h.icon; render(); });
-      iconWrap.appendChild(x);
-    }
-    if (iconEngineState === 'loading') {
-      const s = document.createElement('span');
-      s.className = 'a-muted'; s.textContent = 'loading suggestions…';
-      iconWrap.appendChild(s); return;
-    }
-    if (iconEngineState === 'failed') {
-      const s = document.createElement('span');
-      s.className = 'a-muted'; s.textContent = 'icon suggestions unavailable — needs an internet connection the first time';
-      iconWrap.appendChild(s); return;
-    }
-    (list || []).forEach(name => {
-      if (name === h.icon) return;
-      const g = document.createElement('span');
-      g.className = 'material-symbols-outlined';
-      g.textContent = name; g.title = name;
-      g.addEventListener('click', () => { h.icon = name; render(); });
-      iconWrap.appendChild(g);
-    });
-    if (!list || !list.length) {
-      if (iconRan && Array.isArray(list) && h.text.trim() && iconEngineState === 'ready') {
-        const s = document.createElement('span');
-        s.className = 'a-muted'; s.textContent = 'no strong match';
-        iconWrap.appendChild(s);
-      } else {
-        const b = document.createElement('button');
-        b.className = 'a-icon-suggest-btn';
-        b.textContent = h.icon ? 'Suggest another' : 'Suggest icon';
-        b.addEventListener('click', () => runIconSuggest());
-        iconWrap.appendChild(b);
-      }
-    }
-  }
-
-  async function runIconSuggest() {
-    const token = ++iconReqToken;
-    const label = h.text;
-    iconRan = false;
-    paintIcons(null);
-    const list = await suggestIcons(label);
-    if (token !== iconReqToken || selectedId !== h.id || h.text !== label) return;
-    iconRan = true;
-    paintIcons(list);
-  }
-
-  onIconEngineChange(() => { if (selectedId === h.id) paintIcons(null); });
-  paintIcons(null);
+  const iconPicker = mountIconPicker(iconWrap, {
+    getLabel: () => h.text,
+    getIcon:  () => h.icon,
+    setIcon:  name => { if (name) h.icon = name; else delete h.icon; },
+    onChange: () => render(),
+  });
 
   // debounce label edits → refresh suggestions once the engine has been used
   tInput.addEventListener('input', () => {
     clearTimeout(tInput._iconTimer);
     tInput._iconTimer = setTimeout(() => {
-      if (iconEngineState === 'ready') runIconSuggest();
+      if (iconEngineState === 'ready') iconPicker.suggest();
     }, 400);
   });
 
@@ -959,7 +905,7 @@ svg.addEventListener('click', e => {
   let [x, y] = svgCoords(e);
   if (snapToGrid) [x, y] = snapPos(x, y);
   const text = document.getElementById('newText').value.trim();
-  hexes.push({ id: nextId++, x, y, text, color: newColor, size: hexSize });
+  hexes.push({ id: nextId++, x, y, text, color: newColor, size: hexSize, ...(newIcon ? { icon: newIcon } : {}) });
   selectedId = hexes[hexes.length - 1].id;
   render();
 });
@@ -1240,11 +1186,89 @@ document.getElementById('loadFile').addEventListener('change', e => {
 // ─── Idon icon suggestions (experimental, lazy-loaded) ────────────────────────
 const ICON_SCORE_FLOOR = 0.2;
 let iconEngineState = 'idle';
-let _iconEngineCb = null;
-function onIconEngineChange(cb) { _iconEngineCb = cb; }
+let _iconEngineCbs = [];
+// cb may return false to unsubscribe (used by pickers whose DOM node is gone)
+function onIconEngineChange(cb) { _iconEngineCbs.push(cb); }
 function _setIconEngineState(s) {
   iconEngineState = s;
-  if (_iconEngineCb) { try { _iconEngineCb(); } catch (e) { console.error(e); } }
+  _iconEngineCbs = _iconEngineCbs.filter(cb => {
+    try { return cb() !== false; } catch (e) { console.error(e); return true; }
+  });
+}
+
+// Reusable icon-suggestion picker. opts: { getLabel, getIcon, setIcon(name|null), onChange? }
+function mountIconPicker(wrap, opts) {
+  let reqToken = 0;
+  let ran = false; // has a suggest request completed for the current label?
+  const alive = () => document.body.contains(wrap);
+
+  function choose(name) {
+    opts.setIcon(name);
+    paint(null);
+    if (opts.onChange) opts.onChange();
+  }
+
+  function paint(list) {
+    wrap.innerHTML = '';
+    const icon = opts.getIcon();
+    if (icon) {
+      const cur = document.createElement('span');
+      cur.className = 'material-symbols-outlined active';
+      cur.textContent = icon; cur.title = icon;
+      wrap.appendChild(cur);
+      const x = document.createElement('span');
+      x.className = 'material-symbols-outlined a-icon-clear';
+      x.textContent = 'close'; x.title = 'Remove icon';
+      x.addEventListener('click', () => choose(null));
+      wrap.appendChild(x);
+    }
+    if (iconEngineState === 'loading') {
+      const s = document.createElement('span');
+      s.className = 'a-muted'; s.textContent = 'loading suggestions…';
+      wrap.appendChild(s); return;
+    }
+    if (iconEngineState === 'failed') {
+      const s = document.createElement('span');
+      s.className = 'a-muted'; s.textContent = 'icon suggestions unavailable — needs an internet connection the first time';
+      wrap.appendChild(s); return;
+    }
+    (list || []).forEach(name => {
+      if (name === icon) return;
+      const g = document.createElement('span');
+      g.className = 'material-symbols-outlined';
+      g.textContent = name; g.title = name;
+      g.addEventListener('click', () => choose(name));
+      wrap.appendChild(g);
+    });
+    if (!list || !list.length) {
+      if (ran && Array.isArray(list) && opts.getLabel().trim() && iconEngineState === 'ready') {
+        const s = document.createElement('span');
+        s.className = 'a-muted'; s.textContent = 'no strong match';
+        wrap.appendChild(s);
+      } else {
+        const b = document.createElement('button');
+        b.className = 'a-icon-suggest-btn';
+        b.textContent = icon ? 'Suggest another' : 'Suggest icon';
+        b.addEventListener('click', () => suggest());
+        wrap.appendChild(b);
+      }
+    }
+  }
+
+  async function suggest() {
+    const token = ++reqToken;
+    const label = opts.getLabel();
+    ran = false;
+    paint(null);
+    const list = await suggestIcons(label);
+    if (token !== reqToken || !alive() || opts.getLabel() !== label) return;
+    ran = true;
+    paint(list);
+  }
+
+  onIconEngineChange(() => { if (!alive()) return false; paint(null); });
+  paint(null);
+  return { suggest, paint };
 }
 
 let _iconEngine = null;      // { extract, names, matrix: Float32Array, count, dim }
@@ -1349,6 +1373,20 @@ if (location.hash === '#test') demo();
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 buildNewColorSwatches();
+
+const newTextInput = document.getElementById('newText');
+const newIconPicker = mountIconPicker(document.getElementById('newIconSuggestions'), {
+  getLabel: () => newTextInput.value,
+  getIcon:  () => newIcon,
+  setIcon:  name => { newIcon = name || null; },
+});
+newTextInput.addEventListener('input', () => {
+  clearTimeout(newTextInput._iconTimer);
+  newTextInput._iconTimer = setTimeout(() => {
+    if (iconEngineState === 'ready') newIconPicker.suggest();
+  }, 400);
+});
+
 render();
 </script>
 </body>
