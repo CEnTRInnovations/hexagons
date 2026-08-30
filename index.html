@@ -352,7 +352,9 @@
       box-shadow: var(--shadow);
       transform: translate(-50%, -50%);
     }
-    .a-edge-pop.is-open { display: flex; }
+    .a-edge-pop.is-open { display: flex; flex-direction: column; gap: 3px; }
+    .a-edge-pop-row { display: flex; gap: 3px; }
+    .a-edge-pop-row-label { font: 0.6rem "Alegreya Sans SC", sans-serif; color: var(--text-muted); align-self: center; padding-right: 2px; text-transform: uppercase; letter-spacing: 0.06em; }
     .a-edge-pop button {
       font-family: "Alegreya Sans", sans-serif;
       font-size: 0.8rem;
@@ -495,11 +497,7 @@
       </svg>
     </div>
     <div class="a-hint">Click to add · Drag to move · Del to remove · Hover an edge to mark + / –</div>
-    <div id="edgePop" class="a-edge-pop">
-      <button type="button" data-pol="1">+</button>
-      <button type="button" data-pol="-1">–</button>
-      <button type="button" data-pol="0">clear</button>
-    </div>
+    <div id="edgePop" class="a-edge-pop"></div>
   </div>
 
 </div>
@@ -539,6 +537,13 @@ let collectPolarity  = false;
 let collectMagnitude = false;
 let collectDirection = false;
 function anyEdgeDimension() { return collectPolarity || collectMagnitude || collectDirection; }
+// Popup direction choice ('forward'/'reverse' as shown to the user, where
+// 'forward' means la→lb) → stored value relative to edgeKey sort order.
+function resolveDirectionChoice(la, lb, choice) {
+  const influencer = choice === 'forward' ? la : lb;
+  const [first] = [la, lb].map(s => s.trim().toLowerCase()).sort();
+  return influencer.trim().toLowerCase() === first ? 'forward' : 'reverse';
+}
 function edgeKey(labelA, labelB) {
   return [labelA, labelB].map(s => String(s || '').trim().toLowerCase()).sort().join(' ');
 }
@@ -701,9 +706,48 @@ function renderAdjacency() {
 const edgePop = document.getElementById('edgePop');
 let edgePopCloseTimer = null;
 let edgePopTarget = null; // { la, lb }
+function edgePopRow(dim, label, buttons) {
+  const row = document.createElement('div');
+  row.className = 'a-edge-pop-row';
+  row.dataset.dim = dim;
+  if (label) {
+    const l = document.createElement('span');
+    l.className = 'a-edge-pop-row-label';
+    l.textContent = label;
+    row.appendChild(l);
+  }
+  buttons.forEach(([val, text, pol]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.val = val;
+    b.textContent = text;
+    if (pol !== undefined) b.dataset.pol = pol; // drives the +/- button colours from shipped CSS
+    row.appendChild(b);
+  });
+  return row;
+}
+
 function openEdgePop(ev, la, lb) {
   clearTimeout(edgePopCloseTimer);
   edgePopTarget = { la, lb };
+  edgePop.innerHTML = '';
+  if (collectDirection) {
+    edgePop.appendChild(edgePopRow('direction', 'dir', [
+      ['forward', `${la} → ${lb}`],
+      ['reverse', `${lb} → ${la}`],
+      ['clear', 'clear'],
+    ]));
+  }
+  if (collectPolarity) {
+    edgePop.appendChild(edgePopRow('polarity', '+/-', [
+      ['1', '+', 1], ['-1', '–', -1], ['clear', 'clear'],
+    ]));
+  }
+  if (collectMagnitude) {
+    edgePop.appendChild(edgePopRow('magnitude', 'mag', [
+      ['1', '1'], ['2', '2'], ['3', '3'], ['clear', 'clear'],
+    ]));
+  }
   edgePop.style.left = ev.clientX + 'px';
   edgePop.style.top = ev.clientY + 'px';
   edgePop.classList.add('is-open');
@@ -714,15 +758,21 @@ function scheduleEdgePopClose() {
 }
 edgePop.addEventListener('mouseenter', () => clearTimeout(edgePopCloseTimer));
 edgePop.addEventListener('mouseleave', scheduleEdgePopClose);
-edgePop.querySelectorAll('button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    if (!edgePopTarget) return;
-    const k = edgeKey(edgePopTarget.la, edgePopTarget.lb);
-    const v = parseInt(btn.dataset.pol, 10);
-    setEdgeField(k, 'polarity', (v === 1 || v === -1) ? v : null);
-    edgePop.classList.remove('is-open');
-    render();
-  });
+edgePop.addEventListener('click', ev => {
+  const btn = ev.target.closest('button');
+  if (!btn || !edgePopTarget) return;
+  const dim = btn.closest('[data-dim]').dataset.dim;
+  const val = btn.dataset.val;
+  const k = edgeKey(edgePopTarget.la, edgePopTarget.lb);
+  if (dim === 'polarity') {
+    setEdgeField(k, 'polarity', val === 'clear' ? null : parseInt(val, 10));
+  } else if (dim === 'magnitude') {
+    setEdgeField(k, 'magnitude', val === 'clear' ? null : parseInt(val, 10));
+  } else if (dim === 'direction') {
+    setEdgeField(k, 'direction', val === 'clear' ? null : resolveDirectionChoice(edgePopTarget.la, edgePopTarget.lb, val));
+  }
+  edgePop.classList.remove('is-open');
+  render();
 });
 
 // ─── Text wrap ────────────────────────────────────────────────────────────────
@@ -1214,6 +1264,16 @@ function demo() {
   collectMagnitude = true;
   ok(anyEdgeDimension() === true, 'anyEdgeDimension true when one flag on');
   [collectPolarity, collectMagnitude, collectDirection] = savedFlags;
+
+  // Task 3: dynamic popup
+  const savedFlags3 = [collectPolarity, collectMagnitude, collectDirection];
+  collectPolarity = true; collectMagnitude = true; collectDirection = false;
+  openEdgePop({ clientX: 0, clientY: 0 }, 'care', 'power');
+  const dims = [...document.getElementById('edgePop').querySelectorAll('[data-dim]')].map(r => r.dataset.dim);
+  ok(dims.join(',') === 'direction,polarity,magnitude'.split(',').filter(d => d !== 'direction').join(','),
+     'popup shows exactly the enabled dimensions in order');
+  document.getElementById('edgePop').classList.remove('is-open');
+  [collectPolarity, collectMagnitude, collectDirection] = savedFlags3;
 
   console.log('demo: all checks passed');
 }
