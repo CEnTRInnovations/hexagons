@@ -640,12 +640,32 @@ function renderHex(h) {
     g.appendChild(ring);
   }
 
+  const hasIcon = !!h.icon;
+  const iconSize = hasIcon ? h.size * 0.42 : 0;
   const lines = wrapText(h.text || '', Math.floor(h.size / 7));
   const lineH = Math.max(12, h.size * 0.22);
-  const totalH = lines.length * lineH;
-  const startY = h.y - totalH / 2 + lineH * 0.5;
   const textColor = isLight(h.color) ? '#3E3B35' : '#F6F2E7';
 
+  // icon + text laid out as one vertically-centred stack
+  const gap = hasIcon && lines.length ? h.size * 0.08 : 0;
+  const stackH = iconSize + gap + lines.length * lineH;
+  let cursorY = h.y - stackH / 2;
+
+  if (hasIcon) {
+    const ic = svgEl('text', {
+      x: h.x, y: cursorY + iconSize * 0.5,
+      'text-anchor': 'middle', 'dominant-baseline': 'central',
+      'font-family': '"Material Symbols Outlined"',
+      'font-size': iconSize,
+      fill: textColor,
+      'pointer-events': 'none'
+    });
+    ic.textContent = h.icon;
+    g.appendChild(ic);
+    cursorY += iconSize + gap;
+  }
+
+  const startY = cursorY + lineH * 0.5;
   lines.forEach((line, i) => {
     const t = svgEl('text', {
       x: h.x, y: startY + i * lineH,
@@ -1106,11 +1126,11 @@ document.getElementById('loadFile').addEventListener('change', e => {
 // ─── Idon icon suggestions (experimental, lazy-loaded) ────────────────────────
 const ICON_SCORE_FLOOR = 0.2;
 let iconEngineState = 'idle';
-const _iconEngineCbs = [];
-function onIconEngineChange(cb) { _iconEngineCbs.push(cb); }
+let _iconEngineCb = null;
+function onIconEngineChange(cb) { _iconEngineCb = cb; }
 function _setIconEngineState(s) {
   iconEngineState = s;
-  _iconEngineCbs.forEach(cb => { try { cb(); } catch (e) { console.error(e); } });
+  if (_iconEngineCb) { try { _iconEngineCb(); } catch (e) { console.error(e); } }
 }
 
 let _iconEngine = null;      // { extract, names, matrix: Float32Array, count, dim }
