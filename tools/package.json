@@ -1,0 +1,15 @@
+{
+  "name": "apiary-icon-embeddings",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test",
+    "catalog": "node fetch-icon-catalog.mjs",
+    "build": "node build-icon-embeddings.mjs",
+    "vendor": "node vendor-model.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "3.7.6"
+  }
+}
