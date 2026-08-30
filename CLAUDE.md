@@ -85,7 +85,7 @@ Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `show
 | `hashId(str)` | Deterministic, non-cryptographic hash → short stable id string for a contributor label |
 | `slugify(label)` | Filename-safe slug: lowercase, whitespace → `_`, strips other unsafe characters |
 | `getContributorLabel()` | Reads the trimmed value of the Group field |
-| `adjacentTermPairs()` | Shared edge source for both Export csv and Save — labeled non-self-loop adjacent hex pairs as `{from, to}`, expanded to directed rows when `collectDirection` is on (`from` = influencer; unset direction → two rows), carrying `polarity` / `weight` per enabled parameter. Logs a `console.info` count of unclassified (bidirectional) pairs when direction is on |
+| `adjacentTermPairs()` | Shared edge source for both Export csv and Save — labeled non-self-loop adjacent hex pairs as `{from, to}`, expanded to directed rows when `collectDirection` is on (`from` = influencer; unset direction → two rows), carrying `polarity` / `weight` per enabled parameter |
 | `edgeKey(a, b)` | Sorted, lowercased, NUL-joined term-label pair → the stable key used for `edgeData` |
 | `edgeField(k, f)` / `setEdgeField(k, f, v)` | Get / set one dimension field on an `edgeData` entry; `v` null/undefined deletes the field, an emptied entry is removed |
 | `orderedLabels(la, lb)` / `influenceRows(la, lb)` | `orderedLabels` returns the pair in `edgeKey` sort order (original case); `influenceRows` resolves a pair's stored direction to `[[from, to], …]` — one row for forward/reverse, **two** rows when direction is unset |
@@ -122,10 +122,10 @@ Three optional dimensions, each toggled by a checkbox in the **Edge Data** panel
 
 Hovering (or clicking) the dot at the midpoint of any edge between two **labeled** hexes opens a popup with one row per enabled dimension, in **direction / polarity / magnitude** order. The direction row's buttons show the real term labels (`care → power` / `power → care`). Button values: `forward` / `reverse` / `1` / `-1` / `1` / `2` / `3` / `clear`.
 
-Badge rendering, all in the `#edgeBadges` overlay group (above `#hexes`, so badges survive the edge line being hidden under the two touching hexes):
-- **polarity** — colored `+` / `–` badge at the midpoint (green `--secondary` for `+`, plum `--serve` for `–`). Unchanged from the shipped feature.
-- **magnitude** — edge line `stroke-width` becomes `1.5 + magnitude`, plus the digit as a small `<text>` offset to `(mx + 12, my + 12)`.
-- **direction** — a `<polygon>` triangle at the midpoint pointing influencer → influenced, **only** for a stored forward/reverse (an unset/bidirectional pair keeps the plain grey affordance dot).
+Badge rendering, all in the `#edgeBadges` overlay group (above `#hexes`, so badges survive the edge line being hidden under the two touching hexes). Polarity sits on the midpoint dot; magnitude and direction are pushed `OFF` (18px) to opposite sides along the edge's perpendicular so the three never overlap when all set on one edge:
+- **polarity** — colored `+` / `–` badge on the midpoint dot (green `--secondary` for `+`, plum `--serve` for `–`).
+- **magnitude** — edge line `stroke-width` becomes `1.5 + magnitude`, plus the digit as a small `<text>` on the `+perp` side of the midpoint.
+- **direction** — a `<polygon>` triangle on the `-perp` side of the midpoint pointing influencer → influenced, **only** for a stored forward/reverse (an unset/bidirectional pair keeps the plain grey affordance dot).
 
 An explicit neutral polarity (`0`) is still not exposed; unclassified and neutral both export as "not characterized".
 

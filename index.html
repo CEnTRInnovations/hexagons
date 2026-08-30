@@ -360,9 +360,10 @@
       border-radius: 4px;
       box-shadow: var(--shadow);
       transform: translate(-50%, -50%);
+      max-width: 92vw;
     }
     .a-edge-pop.is-open { display: flex; flex-direction: column; gap: 3px; }
-    .a-edge-pop-row { display: flex; gap: 3px; }
+    .a-edge-pop-row { display: flex; gap: 3px; flex-wrap: wrap; }
     .a-edge-pop-row-label { font: 0.6rem "Alegreya Sans SC", sans-serif; color: var(--text-muted); align-self: center; padding-right: 2px; text-transform: uppercase; letter-spacing: 0.06em; }
     .a-edge-pop button {
       font-family: "Alegreya Sans", sans-serif;
@@ -425,10 +426,10 @@
       <div class="a-section-stripe"></div>
       <label class="a-label">Label text</label>
       <input id="newText" type="text" placeholder="Type and click canvas to add" style="margin-bottom:0.75rem" />
-      <label class="a-label">Color</label>
-      <div id="newColorSwatches" class="a-swatches"></div>
       <label class="a-label">Icon</label>
       <div id="newIconSuggestions" class="a-icon-suggestions"></div>
+      <label class="a-label">Color</label>
+      <div id="newColorSwatches" class="a-swatches"></div>
     </div>
 
     <hr class="a-section-divider" />
@@ -706,7 +707,12 @@ function renderAdjacency() {
 
     // Interactive badge at the edge midpoint, in the overlay group above #hexes —
     // the line itself sits under the two (touching) hexes and can't be hovered.
+    // Polarity sits on the midpoint dot; magnitude and direction are pushed to
+    // opposite sides along the edge's perpendicular so the three never overlap.
     const mx = (ha.x + hb.x) / 2, my = (ha.y + hb.y) / 2;
+    const edgeAng = Math.atan2(hb.y - ha.y, hb.x - ha.x);
+    const px = -Math.sin(edgeAng), py = Math.cos(edgeAng); // perpendicular unit vector
+    const OFF = 18;
     const dot = svgEl('circle', {
       cx: mx, cy: my, r: pol ? 11 : 7,
       fill: pol ? color : 'rgba(62,59,53,0.28)',
@@ -727,25 +733,26 @@ function renderAdjacency() {
     }
     if (mag) {
       const d = svgEl('text', {
-        x: mx + 12, y: my + 12, 'text-anchor': 'middle', 'dominant-baseline': 'central',
-        'font-size': 12, 'font-weight': 700, fill: 'var(--text)', 'pointer-events': 'none',
+        x: mx + px * OFF, y: my + py * OFF, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+        'font-size': 13, 'font-weight': 700, fill: 'var(--text)', 'pointer-events': 'none',
         'paint-order': 'stroke', stroke: 'var(--bg-main)', 'stroke-width': 3
       });
       d.textContent = String(mag);
       gBadge.appendChild(d);
     }
     if (dir) {
-      // influencer → influenced, in canvas coords
+      // influencer → influenced, in canvas coords; marker offset to the side opposite magnitude
       const [fromLabel] = influenceRows(la, lb)[0];
       const src = (ha.text || '').trim().toLowerCase() === fromLabel.toLowerCase() ? ha : hb;
       const dst = src === ha ? hb : ha;
       const ang = Math.atan2(dst.y - src.y, dst.x - src.x);
-      // ponytail: marker offsets (s=7, ±0.5 rad) are eyeballed; tune visually if it collides with the polarity badge.
+      const cxm = mx - px * OFF, cym = my - py * OFF;
+      // ponytail: OFF=18 and the ±0.5 rad half-angle are eyeballed; tune visually.
       const s = 7;
-      const tip = [mx + Math.cos(ang) * s, my + Math.sin(ang) * s];
+      const tip = [cxm + Math.cos(ang) * s, cym + Math.sin(ang) * s];
       const back = ang + Math.PI;
-      const p1 = [mx + Math.cos(back + 0.5) * s, my + Math.sin(back + 0.5) * s];
-      const p2 = [mx + Math.cos(back - 0.5) * s, my + Math.sin(back - 0.5) * s];
+      const p1 = [cxm + Math.cos(back + 0.5) * s, cym + Math.sin(back + 0.5) * s];
+      const p2 = [cxm + Math.cos(back - 0.5) * s, cym + Math.sin(back - 0.5) * s];
       gBadge.appendChild(svgEl('polygon', {
         points: `${tip[0]},${tip[1]} ${p1[0]},${p1[1]} ${p2[0]},${p2[1]}`,
         fill: 'var(--text)', stroke: 'var(--bg-main)', 'stroke-width': 1.5, 'pointer-events': 'none'
@@ -803,6 +810,16 @@ function openEdgePop(ev, la, lb) {
   edgePop.style.left = ev.clientX + 'px';
   edgePop.style.top = ev.clientY + 'px';
   edgePop.classList.add('is-open');
+  // Keep it on screen — the popup is fixed + translate(-50%,-50%), so its box
+  // straddles the anchor point; nudge the anchor until the box clears the edges.
+  const r = edgePop.getBoundingClientRect(), m = 8;
+  let cx = ev.clientX, cy = ev.clientY;
+  if (r.left < m) cx += m - r.left;
+  else if (r.right > innerWidth - m) cx -= r.right - (innerWidth - m);
+  if (r.top < m) cy += m - r.top;
+  else if (r.bottom > innerHeight - m) cy -= r.bottom - (innerHeight - m);
+  edgePop.style.left = cx + 'px';
+  edgePop.style.top = cy + 'px';
 }
 function scheduleEdgePopClose() {
   clearTimeout(edgePopCloseTimer);
@@ -1144,7 +1161,6 @@ function getContributorLabel() {
 // polarity/weight when their parameter is on. Shared source for CSV + .bee.
 function adjacentTermPairs() {
   const out = [];
-  let total = 0, undirected = 0;
   getAdjacent().forEach(([a, b]) => {
     const la = (hexes.find(h => h.id === a)?.text || '').trim();
     const lb = (hexes.find(h => h.id === b)?.text || '').trim();
@@ -1152,8 +1168,6 @@ function adjacentTermPairs() {
     const k = edgeKey(la, lb);
     const pol = edgeField(k, 'polarity');
     const mag = edgeField(k, 'magnitude');
-    total++;
-    if (collectDirection && edgeField(k, 'direction') === undefined) undirected++;
     const rows = collectDirection ? influenceRows(la, lb) : [[la, lb]];
     rows.forEach(([from, to]) => {
       const row = { from, to };
@@ -1162,9 +1176,6 @@ function adjacentTermPairs() {
       out.push(row);
     });
   });
-  if (collectDirection && undirected > 0) {
-    console.info(`${undirected} of ${total} edges are unclassified; exported as bidirectional`);
-  }
   return out;
 }
 
@@ -1558,6 +1569,7 @@ function demo() {
 
   const savedHexes = hexes, savedData = edgeData;
   const s1flags = [collectPolarity, collectMagnitude, collectDirection];
+  const s1ids = [nextId, selectedId];
   hexes = [
     { id: 1, text: 'alpha', x: 0, y: 0, size: 60 },
     { id: 2, text: 'beta',  x: 90, y: 0, size: 60 },
@@ -1582,6 +1594,7 @@ function demo() {
 
   hexes = savedHexes; edgeData = savedData;
   [collectPolarity, collectMagnitude, collectDirection] = s1flags; syncDimensionCheckboxes();
+  [nextId, selectedId] = s1ids;
 
   // Task 2: parameters
   const savedFlags = [collectPolarity, collectMagnitude, collectDirection];
