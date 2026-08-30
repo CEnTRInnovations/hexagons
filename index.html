@@ -544,6 +544,18 @@ function resolveDirectionChoice(la, lb, choice) {
   const [first] = [la, lb].map(s => s.trim().toLowerCase()).sort();
   return influencer.trim().toLowerCase() === first ? 'forward' : 'reverse';
 }
+// Original-case labels ordered by lowercased value — same criterion as edgeKey.
+function orderedLabels(la, lb) {
+  return [la, lb].slice().sort((a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : 1);
+}
+// [ [fromLabel, toLabel], ... ] in influence order. Unset direction = bidirectional (two rows).
+function influenceRows(la, lb) {
+  const [first, second] = orderedLabels(la, lb);
+  const d = edgeField(edgeKey(la, lb), 'direction');
+  if (d === 'forward') return [[first, second]];
+  if (d === 'reverse') return [[second, first]];
+  return [[first, second], [second, first]];
+}
 function edgeKey(labelA, labelB) {
   return [labelA, labelB].map(s => String(s || '').trim().toLowerCase()).sort().join(' ');
 }
@@ -668,6 +680,7 @@ function renderAdjacency() {
     const classifiable = la && lb && la.toLowerCase() !== lb.toLowerCase();
     const pol = classifiable ? edgeField(edgeKey(la, lb), 'polarity') : undefined;
     const mag = classifiable ? edgeField(edgeKey(la, lb), 'magnitude') : undefined;
+    const dir = classifiable ? edgeField(edgeKey(la, lb), 'direction') : undefined;
     const color = pol === 1 ? 'var(--secondary)' : pol === -1 ? 'var(--serve)' : 'rgba(62,59,53,0.20)';
 
     const line = svgEl('line', {
@@ -708,6 +721,23 @@ function renderAdjacency() {
       });
       d.textContent = String(mag);
       gBadge.appendChild(d);
+    }
+    if (dir) {
+      // influencer → influenced, in canvas coords
+      const [fromLabel] = influenceRows(la, lb)[0];
+      const src = (ha.text || '').trim().toLowerCase() === fromLabel.toLowerCase() ? ha : hb;
+      const dst = src === ha ? hb : ha;
+      const ang = Math.atan2(dst.y - src.y, dst.x - src.x);
+      // ponytail: marker offsets (s=7, ±0.5 rad) are eyeballed; tune visually if it collides with the polarity badge.
+      const s = 7;
+      const tip = [mx + Math.cos(ang) * s, my + Math.sin(ang) * s];
+      const back = ang + Math.PI;
+      const p1 = [mx + Math.cos(back + 0.5) * s, my + Math.sin(back + 0.5) * s];
+      const p2 = [mx + Math.cos(back - 0.5) * s, my + Math.sin(back - 0.5) * s];
+      gBadge.appendChild(svgEl('polygon', {
+        points: `${tip[0]},${tip[1]} ${p1[0]},${p1[1]} ${p2[0]},${p2[1]}`,
+        fill: 'var(--text)', stroke: 'var(--bg-main)', 'stroke-width': 1.5, 'pointer-events': 'none'
+      }));
     }
   });
 }
@@ -1296,6 +1326,19 @@ function demo() {
   const digits = [...document.getElementById('edgeBadges').querySelectorAll('text')].map(t => t.textContent);
   ok(digits.includes('3'), 'magnitude digit rendered in the badge overlay');
   hexes = savedHexes4; edgeData = savedData4; collectMagnitude = savedMag; render();
+
+  // Task 5: direction resolver + rendering
+  const savedHexes5 = hexes, savedData5 = edgeData, savedDir = collectDirection;
+  hexes = [{ id: 1, text: 'Zeta', color: '#3B6B35', x: 0, y: 0, size: 60 }, { id: 2, text: 'apex', color: '#3B6B35', x: 100, y: 0, size: 60 }];
+  edgeData = {}; collectDirection = true;
+  ok(JSON.stringify(orderedLabels('Zeta', 'apex')) === JSON.stringify(['apex', 'Zeta']), 'orderedLabels sorts by lowercased value, keeps case');
+  ok(influenceRows('Zeta', 'apex').length === 2, 'unset direction yields two influence rows');
+  setEdgeField(edgeKey('Zeta', 'apex'), 'direction', resolveDirectionChoice('apex', 'Zeta', 'forward'));
+  const rows = influenceRows('Zeta', 'apex');
+  ok(rows.length === 1 && rows[0][0] === 'apex' && rows[0][1] === 'Zeta', 'forward direction yields one row, influencer first');
+  render();
+  ok(document.getElementById('edgeBadges').querySelector('polygon') !== null, 'direction marker rendered');
+  hexes = savedHexes5; edgeData = savedData5; collectDirection = savedDir; render();
 
   console.log('demo: all checks passed');
 }
