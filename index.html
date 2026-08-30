@@ -1169,6 +1169,7 @@ function loadBeeData(data) {
   const edgesRaw = Array.isArray(data && data.edges) ? data.edges : [];
   edgeData = {};
 
+  const dirOf = (f, t) => f.trim().toLowerCase() < t.trim().toLowerCase() ? 'forward' : 'reverse';
   const dims = data && data.dimensions;
   if (dims && typeof dims === 'object') {
     collectPolarity  = !!dims.polarity;
@@ -1182,7 +1183,7 @@ function loadBeeData(data) {
     collectDirection = edgesRaw.some(e => {
       if (!e || !e.from || !e.to) return false;
       const k = edgeKey(String(e.from).trim(), String(e.to).trim());
-      const dirKey = k + '|' + (String(e.from).trim().toLowerCase() < String(e.to).trim().toLowerCase() ? 'f' : 'r');
+      const dirKey = k + '|' + dirOf(String(e.from), String(e.to));
       if (seen.has(k) && !seen.has(dirKey)) return true; // same pair, opposite order → directed data present
       seen.add(k); seen.add(dirKey);
       return false;
@@ -1197,8 +1198,7 @@ function loadBeeData(data) {
     const k = edgeKey(f, t);
     if (e.effect === 1 || e.effect === -1) setEdgeField(k, 'polarity', e.effect);
     if ([1, 2, 3].includes(e.weight)) setEdgeField(k, 'magnitude', e.weight);
-    const order = f.toLowerCase() < t.toLowerCase() ? 'forward' : 'reverse';
-    (dirSeen[k] || (dirSeen[k] = new Set())).add(order);
+    (dirSeen[k] || (dirSeen[k] = new Set())).add(dirOf(f, t));
   });
   if (collectDirection) {
     Object.entries(dirSeen).forEach(([k, orders]) => {
@@ -1337,6 +1337,7 @@ function demo() {
   ok(edgeKey('a b', 'c') !== edgeKey('a', 'b c'), 'edgeKey separator is collision-safe');
 
   const savedHexes = hexes, savedData = edgeData;
+  const s1flags = [collectPolarity, collectMagnitude, collectDirection];
   hexes = [
     { id: 1, text: 'alpha', x: 0, y: 0, size: 60 },
     { id: 2, text: 'beta',  x: 90, y: 0, size: 60 },
@@ -1360,6 +1361,7 @@ function demo() {
   ok(edgeField(edgeKey('beta', 'gamma'), 'polarity') === undefined, 'edge without effect stays unclassified');
 
   hexes = savedHexes; edgeData = savedData;
+  [collectPolarity, collectMagnitude, collectDirection] = s1flags; syncDimensionCheckboxes();
 
   // Task 2: parameters
   const savedFlags = [collectPolarity, collectMagnitude, collectDirection];
