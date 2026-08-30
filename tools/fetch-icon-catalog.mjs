@@ -27,7 +27,10 @@ export function buildCatalog(metadata) {
     if (isLogoLike(icon)) continue;
     if (seen.has(icon.name)) continue;
     seen.add(icon.name);
-    const doc = [humanize(icon.name), (icon.tags || []).join(', '), (icon.categories || []).join(', ')].join('. ');
+    // Repeat the humanized name so the mean-pooled embedding leans toward the
+    // icon's actual meaning rather than its (often generic) tag soup.
+    const h = humanize(icon.name);
+    const doc = [h, h, h, (icon.tags || []).join(', '), (icon.categories || []).join(', ')].join('. ');
     rows.push({ name: icon.name, doc });
   }
   rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
