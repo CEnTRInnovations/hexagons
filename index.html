@@ -320,11 +320,43 @@
       width: 28px; height: 28px;
       border-radius: 4px;
       border: 2px solid transparent;
+      box-shadow: inset 0 0 0 1px rgba(62,59,53,0.12); /* keeps pale swatches visible on parchment */
       cursor: pointer;
       transition: transform 0.1s ease;
     }
     .a-swatch:hover { transform: scale(1.12); }
     .a-swatch.active { border-color: var(--text); box-shadow: 0 0 0 1px var(--bg-main); }
+
+    /* ── PALETTE PICKER ── */
+    .a-palette-select {
+      width: 100%;
+      margin-bottom: 0.5rem;
+      padding: 0.35rem 0.5rem;
+      font-family: "Alegreya Sans", sans-serif;
+      font-size: 0.8rem;
+      color: var(--text);
+      background: var(--bg-main);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .a-palette-legend {
+      margin: 0.5rem 0 0.75rem;
+      padding: 0.4rem 0.55rem;
+      background: var(--bg-main);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      font-family: "Alegreya Sans", sans-serif;
+      font-size: 0.7rem;
+      line-height: 1.4;
+      color: var(--text-muted);
+    }
+    .a-palette-legend-row { display: flex; align-items: baseline; gap: 0.4rem; margin: 0.15rem 0; }
+    .a-palette-legend-dot {
+      flex: none; width: 10px; height: 10px; border-radius: 3px;
+      box-shadow: inset 0 0 0 1px rgba(62,59,53,0.15); transform: translateY(1px);
+    }
+    .a-palette-legend-row b { color: var(--text); }
 
     /* ── ICON SUGGESTIONS (idon) ── */
     .a-icon-suggestions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0.25rem 0 0.75rem; min-height: 34px; }
@@ -507,7 +539,7 @@
       <label class="a-label">Icon</label>
       <div id="newIconSuggestions" class="a-icon-suggestions"></div>
       <label class="a-label">Color</label>
-      <div id="newColorSwatches" class="a-swatches"></div>
+      <div id="newColorPicker"></div>
       <button id="btnAddHex" type="button" class="a-btn a-btn--primary" style="width:100%;justify-content:center;margin-top:0.9rem;">
         <span class="material-symbols-outlined" aria-hidden="true">add</span>
         Add to canvas
@@ -607,8 +639,47 @@
 </main>
 
 <script>
-// ─── Palette ──────────────────────────────────────────────────────────────────
-const PALETTE = ['#E8A838', '#C47C1A', '#F2C96E', '#3B6B35', '#3F5E78', '#A8DADC', '#8C6E45', '#7A4A62', '#5A7A46', '#B5838D', '#6D6875', '#C9CBA3', '#E9C46A', '#90BE6D', '#D4956A'];
+// ─── Palettes ─────────────────────────────────────────────────────────────────
+// `neutral` is the free-choice earth-tone set (no meanings). `strategic` (Hodgson,
+// 4-mode) and `systems` (thesystemsthinker.com, 10-mode) are semantic: each colour
+// codes a type of thinking. All rendered in the warm parchment family; `ref` keeps
+// the source colour name so readers of those articles recognise it. `slug` is the
+// category token written to .bee (see Save / loadBeeData).
+const PALETTES = {
+  neutral: {
+    name: 'Earth tones',
+    colors: ['#E8A838', '#C47C1A', '#F2C96E', '#3B6B35', '#3F5E78', '#A8DADC', '#8C6E45', '#7A4A62', '#5A7A46', '#B5838D', '#6D6875', '#C9CBA3', '#E9C46A', '#90BE6D', '#D4956A'].map(hex => ({ hex })),
+  },
+  strategic: {
+    name: 'Strategic (4-mode)',
+    source: 'Hodgson',
+    colors: [
+      { hex: '#5A7A46', ref: 'Green',  slug: 'imagining',       meaning: 'Raw unfiltered ideas, "what if?", "what\'s possible?"' },
+      { hex: '#E9C46A', ref: 'Yellow', slug: 'connecting',      meaning: 'Connections, opportunities, alternative angles and perspectives' },
+      { hex: '#7A4A62', ref: 'Purple', slug: 'strategizing',    meaning: 'Big-picture strategy, rules, structures and infrastructures' },
+      { hex: '#B0503B', ref: 'Red',    slug: 'decision-making', meaning: 'Final decisions, trade-offs, next steps' },
+    ],
+  },
+  systems: {
+    name: 'Systems Thinker (10-mode)',
+    source: 'thesystemsthinker.com',
+    colors: [
+      { hex: '#8A8175', ref: 'Gray',       slug: 'problem',     meaning: 'Problems, uncertainties' },
+      { hex: '#C47C1A', ref: 'Orange',     slug: 'variable',    meaning: 'Variables' },
+      { hex: '#F0E9D6', ref: 'White',      slug: 'question',    meaning: 'Questions, lessons' },
+      { hex: '#E9C46A', ref: 'Yellow',     slug: 'opportunity', meaning: 'Opportunities' },
+      { hex: '#8C6E45', ref: 'Brown',      slug: 'judgment',    meaning: 'Practical judgments' },
+      { hex: '#B0503B', ref: 'Red',        slug: 'opinion',     meaning: 'Opinions' },
+      { hex: '#5A7A46', ref: 'Green',      slug: 'idea',        meaning: 'Ideas, key choices, action steps' },
+      { hex: '#7A4A62', ref: 'Violet',     slug: 'decision',    meaning: 'Decisions, what you really want' },
+      { hex: '#9DBFC0', ref: 'Light Blue', slug: 'neutral',     meaning: 'Neutral' },
+      { hex: '#3E3B35', ref: 'Black',      slug: 'fact',        meaning: 'Facts' },
+    ],
+  },
+};
+let activePalette = 'neutral';
+const paletteColors = () => PALETTES[activePalette].colors;
+const paletteHexes  = () => paletteColors().map(c => c.hex);
 
 let hexes = [];
 let nextId = 1;
@@ -616,7 +687,7 @@ let selectedId = null;
 let hexSize = 60;
 let snapToGrid = true;
 let showGrid = false;
-let newColor = PALETTE[0];
+let newColor = PALETTES.neutral.colors[0].hex;
 let newIcon = null; // icon applied to the next hex added from the New Hexagon section
 let dragging = null;
 // Per-edge attributes: { [edgeKey]: { polarity?: 1|-1, magnitude?: 1|2|3, direction?: 'forward'|'reverse' } }
@@ -1188,12 +1259,15 @@ function renderSelectedEditor() {
   const cLabel = document.createElement('div');
   cLabel.className = 'a-label'; cLabel.textContent = 'Color';
   div.appendChild(cLabel);
-  const swatchRow = buildSwatches(() => h.color, c => {
-    h.color = c; render();
-    document.querySelector('#selectedEditor .a-swatch.active')?.focus();
+  const picker = document.createElement('div');
+  div.appendChild(picker);
+  renderColorPicker(picker, {
+    getColor: () => h.color,
+    onPick: c => {
+      h.color = c; render();
+      document.querySelector('#selectedEditor .a-swatch.active')?.focus();
+    },
   });
-  swatchRow.style.marginBottom = '0.75rem';
-  div.appendChild(swatchRow);
 
   const delBtn = document.createElement('button');
   delBtn.className = 'a-btn a-btn--danger';
@@ -1205,45 +1279,93 @@ function renderSelectedEditor() {
   div.appendChild(delBtn);
 }
 
-// ─── Color swatches ───────────────────────────────────────────────────────────
-// Keyboard-operable radio group: Tab to the row, arrows/Enter to pick a colour.
+// ─── Colour swatches ─────────────────────────────────────────────────────────
+// Keyboard-operable radio group over the active palette: Tab to the row,
+// arrows/Enter to pick. `getColor` is a live getter for the current hex colour.
 function buildSwatches(getColor, onPick) {
+  const colors = paletteColors();
+  const cur = () => String(getColor() || '').toLowerCase();
+  const known = colors.some(c => c.hex.toLowerCase() === cur());
   const row = document.createElement('div');
   row.className = 'a-swatches';
   row.setAttribute('role', 'radiogroup');
   row.setAttribute('aria-label', 'Hexagon colour');
-  PALETTE.forEach((c, i) => {
+  colors.forEach((c, i) => {
     const s = document.createElement('button');
     s.type = 'button';
-    s.className = 'a-swatch' + (getColor() === c ? ' active' : '');
-    s.style.background = c;
+    const selected = c.hex.toLowerCase() === cur();
+    s.className = 'a-swatch' + (selected ? ' active' : '');
+    s.style.background = c.hex;
     s.setAttribute('role', 'radio');
-    s.setAttribute('aria-label', 'Colour ' + c);
-    const selected = getColor() === c;
+    s.setAttribute('aria-label', c.meaning ? `${c.ref} — ${c.meaning}` : 'Colour ' + c.hex);
+    if (c.meaning) s.title = `${c.ref} — ${c.meaning}`;
     s.setAttribute('aria-checked', String(selected));
-    s.tabIndex = selected || (i === 0 && !PALETTE.includes(getColor())) ? 0 : -1;
-    s.addEventListener('click', () => onPick(c));
+    s.tabIndex = selected || (i === 0 && !known) ? 0 : -1;
+    s.addEventListener('click', () => onPick(c.hex));
     s.addEventListener('keydown', ev => {
       const d = ev.key === 'ArrowRight' || ev.key === 'ArrowDown' ? 1
               : ev.key === 'ArrowLeft'  || ev.key === 'ArrowUp'   ? -1 : 0;
       if (!d) return;
       ev.preventDefault();
-      onPick(PALETTE[(i + d + PALETTE.length) % PALETTE.length]);
+      onPick(colors[(i + d + colors.length) % colors.length].hex);
     });
     row.appendChild(s);
   });
   return row;
 }
-function buildNewColorSwatches() {
-  const div = document.getElementById('newColorSwatches');
-  div.innerHTML = '';
-  const row = buildSwatches(() => newColor, c => {
-    newColor = c;
-    buildNewColorSwatches();
-    div.querySelector('.a-swatch.active')?.focus();
+
+// ─── Colour picker (palette select + swatches + legend) ──────────────────────
+// Shared by the New Hexagon and Edit Hexagon sections. Switching the palette
+// resets `newColor` and re-renders both pickers (buildNewColorPicker + render).
+function renderColorPicker(el, { getColor, onPick }) {
+  el.innerHTML = '';
+
+  const sel = document.createElement('select');
+  sel.className = 'a-palette-select';
+  sel.setAttribute('aria-label', 'Colour palette');
+  Object.entries(PALETTES).forEach(([id, p]) => {
+    const o = document.createElement('option');
+    o.value = id; o.textContent = p.name; o.selected = id === activePalette;
+    sel.appendChild(o);
   });
-  while (row.firstChild) div.appendChild(row.firstChild);
-  for (const a of ['role', 'aria-label']) div.setAttribute(a, row.getAttribute(a));
+  sel.addEventListener('change', () => {
+    activePalette = sel.value;
+    newColor = paletteColors()[0].hex;
+    buildNewColorPicker();
+    render();
+  });
+  el.appendChild(sel);
+
+  el.appendChild(buildSwatches(getColor, onPick));
+
+  const meanings = paletteColors().filter(c => c.meaning);
+  if (meanings.length) {
+    const leg = document.createElement('div');
+    leg.className = 'a-palette-legend';
+    meanings.forEach(c => {
+      const r = document.createElement('div');
+      r.className = 'a-palette-legend-row';
+      const dot = document.createElement('span');
+      dot.className = 'a-palette-legend-dot'; dot.style.background = c.hex;
+      const txt = document.createElement('span');
+      const b = document.createElement('b'); b.textContent = c.ref;
+      txt.append(b, document.createTextNode(' — ' + c.meaning));
+      r.append(dot, txt);
+      leg.appendChild(r);
+    });
+    el.appendChild(leg);
+  }
+}
+
+function buildNewColorPicker() {
+  renderColorPicker(document.getElementById('newColorPicker'), {
+    getColor: () => newColor,
+    onPick: c => {
+      newColor = c;
+      buildNewColorPicker();
+      document.querySelector('#newColorPicker .a-swatch.active')?.focus();
+    },
+  });
 }
 
 // ─── Controls ─────────────────────────────────────────────────────────────────
@@ -1483,6 +1605,28 @@ document.getElementById('btnSave').addEventListener('click', () => {
       return e;
     }),
   };
+  // Non-neutral palette: record the palette id and each edge-participating hex's
+  // semantic category (Apiary-specific extension, legal via additionalProperties;
+  // Apiary Hive ignores it today, same as `dimensions`).
+  if (activePalette !== 'neutral') {
+    bee.palette = activePalette;
+    const slugByHex = {};
+    paletteColors().forEach(c => { if (c.slug) slugByHex[c.hex.toLowerCase()] = c.slug; });
+    const inEdges = new Set();
+    pairs.forEach(p => { inEdges.add(p.from.toLowerCase()); inEdges.add(p.to.toLowerCase()); });
+    const seen = new Set();
+    bee.nodes = [];
+    hexes.forEach(h => {
+      const nl = (h.text || '').trim();
+      const key = nl.toLowerCase();
+      if (!nl || !inEdges.has(key) || seen.has(key)) return;
+      seen.add(key);
+      const node = { label: nl };
+      const slug = slugByHex[String(h.color || '').toLowerCase()];
+      if (slug) node.category = slug;
+      bee.nodes.push(node);
+    });
+  }
   dl(new Blob([JSON.stringify(bee, null, 2)], { type: 'application/json' }), `${slugify(label)}.bee`);
 });
 
@@ -1498,6 +1642,18 @@ document.getElementById('btnSave').addEventListener('click', () => {
 function loadBeeData(data) {
   const edgesRaw = Array.isArray(data && data.edges) ? data.edges : [];
   edgeData = {};
+
+  // Palette + per-node categories (Apiary-specific .bee extension — see Save).
+  activePalette = (data && typeof data.palette === 'string' && PALETTES[data.palette]) ? data.palette : 'neutral';
+  newColor = paletteColors()[0].hex;
+  const hexBySlug = {};
+  paletteColors().forEach(c => { if (c.slug) hexBySlug[c.slug] = c.hex; });
+  const catByLabel = {};
+  if (Array.isArray(data && data.nodes)) {
+    data.nodes.forEach(n => {
+      if (n && n.label && n.category) catByLabel[String(n.label).trim().toLowerCase()] = n.category;
+    });
+  }
 
   const dirOf = (f, t) => f.trim().toLowerCase() < t.trim().toLowerCase() ? 'forward' : 'reverse';
   const dims = data && data.dimensions;
@@ -1637,7 +1793,8 @@ function loadBeeData(data) {
     const shiftedRow = row - rowShift, shiftedCol = col - minCol;
     const x = shiftedCol * colW + (mod2(shiftedRow) === 1 ? colW / 2 : 0);
     const y = shiftedRow * rowH;
-    return { id: i + 1, text: term, color: PALETTE[i % PALETTE.length], x, y, size: hexSize };
+    const catHex = hexBySlug[catByLabel[term.trim().toLowerCase()]];
+    return { id: i + 1, text: term, color: catHex || paletteHexes()[i % paletteHexes().length], x, y, size: hexSize };
   });
 
   hexes = built;
@@ -1645,6 +1802,7 @@ function loadBeeData(data) {
   selectedId = null;
   const label = (data.contributor && data.contributor.label) || '';
   if (label) document.getElementById('contributorLabelInput').value = label;
+  buildNewColorPicker();
   render();
 }
 
@@ -1840,6 +1998,47 @@ function demo() {
   const ok = (c, m) => { if (!c) throw new Error('demo: ' + m); };
   ok(edgeKey('A', 'b') === edgeKey('B', 'a'), 'edgeKey is order/case-independent');
   ok(edgeKey('a b', 'c') !== edgeKey('a', 'b c'), 'edgeKey separator is collision-safe');
+
+  // Colour palettes: switching, legend, and .bee round-trip of node categories
+  {
+    const sv = [hexes, edgeData, activePalette, newColor, selectedId, nextId,
+                document.getElementById('contributorLabelInput').value];
+    activePalette = 'neutral'; newColor = paletteColors()[0].hex;
+    buildNewColorPicker();
+    ok(document.querySelectorAll('#newColorPicker .a-swatch').length === PALETTES.neutral.colors.length, 'neutral palette renders all its swatches');
+    ok(!document.querySelector('#newColorPicker .a-palette-legend'), 'neutral palette shows no legend');
+    activePalette = 'systems'; newColor = paletteColors()[0].hex;
+    buildNewColorPicker();
+    ok(document.querySelectorAll('#newColorPicker .a-swatch').length === 10, 'systems palette renders 10 swatches');
+    ok(document.querySelectorAll('#newColorPicker .a-palette-legend-row').length === 10, 'systems palette legend has one row per colour');
+    ok(document.querySelector('#newColorPicker .a-swatch').title.includes('Problems'), 'swatch carries a meaning tooltip');
+
+    hexes = [
+      { id: 1, text: 'growth', color: PALETTES.systems.colors[6].hex, x: 0, y: 0, size: 60 },   // idea
+      { id: 2, text: 'risk',   color: PALETTES.systems.colors[0].hex, x: 100, y: 0, size: 60 }, // problem
+    ];
+    edgeData = {}; selectedId = null;
+    document.getElementById('contributorLabelInput').value = 'P';
+    const cap = [];
+    const RealBlob = window.Blob, realDl = dl;
+    dl = () => {};
+    window.Blob = function (parts, opts) { cap.push(String(parts[0])); return new RealBlob(parts, opts); };
+    document.getElementById('btnSave').click();
+    dl = realDl; window.Blob = RealBlob;
+    const bee = JSON.parse(cap[0]);
+    ok(bee.palette === 'systems', '.bee records the active palette');
+    ok(bee.nodes.find(n => n.label === 'growth').category === 'idea', '.bee node carries its colour category');
+    ok(bee.nodes.find(n => n.label === 'risk').category === 'problem', '.bee node category resolves per palette');
+
+    activePalette = 'neutral';
+    loadBeeData(bee);
+    ok(activePalette === 'systems', 'loadBeeData restores the palette');
+    ok(hexes.find(h => h.text === 'growth').color === PALETTES.systems.colors[6].hex, 'loadBeeData recolours nodes from their category');
+
+    [hexes, edgeData, activePalette, newColor, selectedId, nextId] = sv;
+    document.getElementById('contributorLabelInput').value = sv[6];
+    buildNewColorPicker(); render();
+  }
 
   const savedHexes = hexes, savedData = edgeData;
   const s1flags = [collectPolarity, collectMagnitude, collectDirection];
@@ -2070,7 +2269,7 @@ function demo() {
   console.log('demo: all checks passed');
 }
 // ─── Init ─────────────────────────────────────────────────────────────────────
-buildNewColorSwatches();
+buildNewColorPicker();
 
 const newTextInput = document.getElementById('newText');
 const newIconPicker = mountIconPicker(document.getElementById('newIconSuggestions'), {

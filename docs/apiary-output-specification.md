@@ -373,6 +373,16 @@ Key differences from the CSV contract:
 - Same edge source and edge rules (§6) as the CSV: touching, labeled,
   non-self-loop hex pairs. Isolated hexes are excluded from both formats
   equally.
+- `palette` / `nodes` — written only when the contributor selected a
+  **semantic color palette** (not the default free-choice "Earth tones"
+  set). `palette` is the palette id (`strategic` | `systems`). `nodes` is
+  an array of `{ "label": "care", "category": "opportunity" }` — one entry
+  per edge-participating labeled hex, `category` being the palette-specific
+  slug of that hex's color (omitted if the hex's color isn't one of the
+  palette's colors). Same isolated-hex exclusion as `edges`. Like
+  `dimensions`, this is an Apiary-specific extension legal only because the
+  spec sets `additionalProperties: true`; Apiary Hive ignores it today. On
+  Load, Apiary restores the palette and recolors nodes from their category.
 - Filename: `{contributor_slug}.bee` — no date, since Save is meant as a
   stable working file to resume a session, not a dated point-in-time
   deliverable like the CSV.
