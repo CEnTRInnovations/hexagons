@@ -40,7 +40,15 @@ Apiary uses the **CEnTRInnovations design system** — a warm parchment palette 
 
 Typography uses Alegreya (serif, headings) and Alegreya Sans (sans-serif, body/UI). Small-caps labels use `Alegreya Sans SC`.
 
-The 15-color hexagon palette is defined in the `PALETTE` constant at the top of the script block. When adding color options, extend that array.
+Hexagon colors come from the `PALETTES` map at the top of the script block — three swatch sets, selected per session via `activePalette` (default `'neutral'`) and a dropdown at the top of the Color section (New Hexagon / Edit Hexagon, shared `renderColorPicker()`):
+
+| id | name | colors | meanings? |
+|---|---|---|---|
+| `neutral` | Earth tones | 15 free-choice warm tones | none |
+| `strategic` | Strategic (4-mode) | Hodgson: imagining / connecting / strategizing / decision-making | yes |
+| `systems` | Systems Thinker (10-mode) | thesystemsthinker.com: problem / variable / question / opportunity / judgment / opinion / idea / decision / neutral / fact | yes |
+
+Each semantic color is `{ hex, ref, slug, meaning }` — `hex` is an earth-toned rendering, `ref` is the source color name (shown in the legend + swatch `title`), `slug` is the category token written to `.bee`. All hexes still store a plain `color` hex string; the category is resolved from `activePalette` at Save time. Extend a palette by adding to its `colors` array.
 
 ---
 
@@ -59,7 +67,7 @@ Each hexagon is a plain JavaScript object stored in the `hexes` array:
 }
 ```
 
-Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `showGrid`, `newColor`, `dragging`, `edgeData`, `collectPolarity`, `collectMagnitude`, `collectDirection`.
+Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `showGrid`, `newColor`, `activePalette`, `dragging`, `edgeData`, `collectPolarity`, `collectMagnitude`, `collectDirection`.
 
 `edgeData` is a plain object `{ [edgeKey]: { polarity?, magnitude?, direction? } }` — optional per-edge classifications, each dimension gated by its `collect*` parameter (all default off). `polarity` is `±1`, `magnitude` is `1`–`3`, `direction` is `'forward'` / `'reverse'` relative to `edgeKey`'s sort order (unset = bidirectional). Keyed on the sorted, lowercased term-label pair via `edgeKey(a, b)`, so classifications survive a Save→Load round-trip. Helpers `edgeField(key, field)` / `setEdgeField(key, field, value)` read and write single fields; setting `null`/`undefined` deletes the field, and an emptied entry is deleted whole.
 
@@ -82,6 +90,8 @@ Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `show
 | `svgCoords(e)` | Translates a pointer event to SVG-space coordinates |
 | `onHexMouseDown(e, id)` | Initiates drag on a hex; handles click-vs-drag disambiguation |
 | `dl(blob, name)` | Triggers a file download from a Blob |
+| `renderColorPicker(el, {selected, onPick})` / `buildNewColorPicker()` | Renders palette dropdown + swatches + legend into `el`; shared by New Hexagon and Edit Hexagon. Changing the dropdown sets `activePalette`, resets `newColor`, re-renders both |
+| `paletteColors()` / `paletteHexes()` | The active palette's `{hex,ref,slug,meaning}` objects / bare hex strings |
 | `csvField(str)` | RFC 4180 quoting for a single CSV field |
 | `hashId(str)` | Deterministic, non-cryptographic hash → short stable id string for a contributor label |
 | `slugify(label)` | Filename-safe slug: lowercase, whitespace → `_`, strips other unsafe characters |
@@ -108,12 +118,14 @@ Free-text field (`#contributorLabelInput`, placeholder `e.g. Group A`), spaces a
 ### Save
 Writes a `.bee` JSON file: `{ version, contributor: { label, id }, dimensions: { polarity, magnitude, direction }, edges: [...] }`, matching the interchange spec Apiary Hive consumes (`bee-file-spec.json`, in the `apiary-hive` repo). The `dimensions` block (three booleans reflecting the Edge Classification parameters) is **always written**. Per edge: `weight: 1 | 2 | 3` only when `collectMagnitude` is on and the pair has a magnitude; `effect: 1 | -1` only when `collectPolarity` is on and the pair is classified; both otherwise omitted (the spec defaults each to `1` on ingest, same rationale as `NO WEIGHT`/`NO POLARITY` below). Direction is encoded by edge order (`from` = influencer) — a pair with the direction parameter on but no direction set is written as **two directed edge objects**. Edges come from `adjacentTermPairs()`. Filename: `{slug}.bee` (no date — a stable working-file name, unlike the dated CSV).
 
+When `activePalette !== 'neutral'`, two more Apiary-specific fields are written (same legality as `dimensions` — `additionalProperties: true`, Apiary Hive ignores them today): `palette` (the palette id) and `nodes` — one `{ label, category? }` per edge-participating labeled hex, `category` being the `slug` of that hex's color in the active palette (omitted when the color isn't in the palette). Isolated hexes are excluded, same as `edges`.
+
 ### Load
 Reads a `.bee` file and rebuilds the canvas from its `edges`. Positions aren't part of the `.bee` spec, so `loadBeeData()` re-lays-out the terms on the same hex grid used by snap-to-grid: it walks the edge graph and seats each term in a free grid cell next to an already-placed neighbor. The placement is constrained so it will **never seat two unrelated terms as grid-neighbors** — a cell is only valid for a term if every already-occupied grid-neighbor of that cell is a real graph-neighbor of that term. This is deliberately a correctness-over-completeness tradeoff:
 - **Never fabricates an adjacency.** Verified by round-tripping synthetic graphs (dense random graphs, disconnected components, triangles, high-degree hubs) through the actual code and diffing expected vs. reconstructed edges — zero false positives across all cases tested.
 - **May not show every true edge as touching.** A term connected to more than 6 others (the hex grid's physical neighbor limit) or part of a tightly-closed cluster (e.g. a triangle) may end up with some of its edges not visually adjacent after reload, even though the relationship still existed in the source file.
 - **Terms with no edge at all can't round-trip.** The `.bee` format only carries the edge list, not isolated nodes — a hex with zero adjacent neighbors is dropped by Save and can never be restored by Load. This mirrors the CSV export's existing isolated-node behavior (see Edge Rules below), now extended to Save/Load too.
-- On success, also restores `contributor.label` into the Group field. `data.dimensions` re-applies the three Edge Classification parameters and syncs their checkboxes; when the block is absent, they are inferred conservatively (polarity from any `effect` ±1, magnitude from any `weight` in 1–3, direction only if some pair appears in both orders). `edgeData` is reset, then repopulated from each edge's `effect` → `polarity`, `weight` → `magnitude`, and edge order → `direction` (a pair seen in one order → forward/reverse; seen both ways → left unset).
+- On success, also restores `contributor.label` into the Group field. `data.palette` (if a known id) sets `activePalette` and `data.nodes` recolors each rebuilt hex from its `category` (→ palette slug → hex); absent/unknown `palette` resets to `neutral`. `data.dimensions` re-applies the three Edge Classification parameters and syncs their checkboxes; when the block is absent, they are inferred conservatively (polarity from any `effect` ±1, magnitude from any `weight` in 1–3, direction only if some pair appears in both orders). `edgeData` is reset, then repopulated from each edge's `effect` → `polarity`, `weight` → `magnitude`, and edge order → `direction` (a pair seen in one order → forward/reverse; seen both ways → left unset).
 
 ### Export csv
 Downloads an **edge list** — `from,to` columns, RFC 4180 quoted, built from `adjacentTermPairs()` — matching the CEnTR\*CANON ingestion contract in `docs/apiary-output-specification.md`. Columns after `from,to` are `weight` / `polarity` / `direction` **in that order**, each present **iff its parameter is on** — even if every value is empty (a classified edge whose parameter is off exports with no column for that dimension; this changed from the interim polarity behaviour, which force-added the column whenever any edge was classified). `direction` is a constant `1` on every row; its **presence** flags directed mode (`from` = influencer, read from row order), and an unclassified pair emits two rows (one each way). Filename: `{slug}_{YYYY-MM-DD}.csv` (dated — a point-in-time deliverable, unlike Save).
