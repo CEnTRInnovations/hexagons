@@ -1820,6 +1820,67 @@ document.getElementById('loadFile').addEventListener('change', e => {
 
 // ─── Idon icon suggestions (experimental, lazy-loaded) ────────────────────────
 const ICON_SCORE_FLOOR = 0.3; // ponytail: cosine floor, tune via iconDemo() if matches feel too loose/tight
+
+// Hand-curated icon suggestions for the abstract community-engaged-research
+// vocabulary that recurs on hexagons — concepts like "trust", "power",
+// "ethics", "lived experience" that an embedding model can't reliably map to a
+// glyph (no lexical overlap with any icon name/tag). Keys are lowercased,
+// whitespace-collapsed labels; an exact match here short-circuits the model
+// entirely (instant, no download). Edit freely — every value must be a real
+// Material Symbol name (checked by iconDemo()).
+const ICON_ALIASES = {
+  trust: ['handshake', 'verified_user'], relationship: ['diversity_3', 'handshake'], relationships: ['diversity_3', 'handshake'],
+  partnership: ['handshake', 'groups'], partner: ['handshake', 'groups'], partners: ['handshake', 'groups'],
+  collaboration: ['groups', 'diversity_3'], collaborate: ['groups', 'diversity_3'], cooperation: ['groups', 'handshake'],
+  reciprocity: ['sync_alt', 'swap_horiz'], 'mutual benefit': ['sync_alt', 'handshake'], respect: ['volunteer_activism', 'sentiment_satisfied'],
+  communication: ['forum', 'chat'], listening: ['hearing', 'headset_mic'], dialogue: ['forum', 'record_voice_over'],
+  conversation: ['forum', 'chat'], conflict: ['bolt', 'warning'], tension: ['bolt', 'warning'], repair: ['healing', 'build'],
+  power: ['account_balance', 'groups'], 'power dynamics': ['balance', 'groups'], 'power sharing': ['balance', 'handshake'],
+  equity: ['balance', 'diversity_3'], inequity: ['balance', 'warning'], equality: ['equal', 'balance'], inequality: ['balance', 'warning'],
+  justice: ['gavel', 'balance'], injustice: ['gavel', 'warning'], oppression: ['lock', 'block'], privilege: ['workspace_premium', 'star'],
+  inclusion: ['diversity_3', 'groups'], inclusive: ['diversity_3', 'groups'], exclusion: ['group_off', 'block'],
+  marginalization: ['group_off', 'block'], representation: ['groups', 'how_to_vote'], voice: ['record_voice_over', 'campaign'],
+  empowerment: ['bolt', 'volunteer_activism'], advocacy: ['campaign', 'volunteer_activism'], 'social change': ['change_circle', 'volunteer_activism'],
+  liberation: ['lock_open', 'flight_takeoff'],
+  knowledge: ['psychology', 'menu_book'], know: ['psychology', 'cognition'], knowing: ['psychology', 'cognition'],
+  understand: ['psychology', 'lightbulb'], understanding: ['psychology', 'lightbulb'], insight: ['lightbulb', 'psychology'],
+  learning: ['school', 'model_training'], learn: ['school', 'model_training'], education: ['school', 'menu_book'],
+  teaching: ['school', 'co_present'], expertise: ['workspace_premium', 'psychology'], 'lived experience': ['person', 'psychology'],
+  wisdom: ['self_improvement', 'psychology'], research: ['science', 'biotech'], data: ['analytics', 'database'],
+  evidence: ['fact_check', 'science'], inquiry: ['search', 'quiz'], question: ['help', 'quiz'], questions: ['help', 'quiz'],
+  reflection: ['self_improvement', 'cached'], reflexivity: ['self_improvement', 'cached'], curiosity: ['lightbulb', 'travel_explore'],
+  storytelling: ['auto_stories', 'record_voice_over'], narrative: ['auto_stories', 'menu_book'],
+  ethics: ['balance', 'gavel'], ethical: ['balance', 'gavel'], values: ['favorite', 'diversity_3'], integrity: ['verified', 'shield'],
+  consent: ['assignment_turned_in', 'how_to_reg'], confidentiality: ['lock', 'privacy_tip'], privacy: ['lock', 'privacy_tip'],
+  harm: ['warning', 'dangerous'], 'do no harm': ['health_and_safety', 'shield'], safety: ['health_and_safety', 'shield'],
+  care: ['volunteer_activism', 'favorite'], dignity: ['volunteer_activism', 'accessibility_new'], humility: ['self_improvement', 'volunteer_activism'],
+  fairness: ['balance', 'equal'],
+  community: ['groups', 'diversity_3'], communities: ['groups', 'diversity_3'], 'community member': ['person', 'groups'],
+  'community members': ['groups', 'diversity_3'], stakeholder: ['groups', 'diversity_3'], stakeholders: ['groups', 'diversity_3'],
+  staff: ['badge', 'work'], researcher: ['science', 'school'], researchers: ['science', 'school'], participant: ['person', 'groups'],
+  participants: ['groups', 'diversity_3'], coalition: ['diversity_3', 'groups'], network: ['hub', 'share'],
+  neighborhood: ['home_work', 'location_city'], belonging: ['diversity_3', 'favorite'], culture: ['diversity_3', 'public'],
+  identity: ['badge', 'fingerprint'], youth: ['groups', 'child_care'], elders: ['elderly', 'groups'],
+  planning: ['event_note', 'checklist'], facilitation: ['groups', 'forum'], decision: ['how_to_vote', 'fork_right'],
+  'decision making': ['how_to_vote', 'fork_right'], 'decision-making': ['how_to_vote', 'fork_right'], action: ['bolt', 'directions_run'],
+  implementation: ['build', 'rocket_launch'], evaluation: ['assessment', 'fact_check'], assessment: ['assessment', 'fact_check'],
+  outcomes: ['flag', 'insights'], impact: ['insights', 'flag'], sustainability: ['recycling', 'eco'],
+  'capacity building': ['trending_up', 'fitness_center'], capacity: ['trending_up', 'fitness_center'], resources: ['inventory_2', 'savings'],
+  funding: ['payments', 'savings'], funds: ['payments', 'savings'], grant: ['payments', 'description'], budget: ['payments', 'account_balance_wallet'],
+  time: ['schedule', 'hourglass_empty'], meeting: ['groups', 'event'], meetings: ['groups', 'event'], training: ['model_training', 'school'],
+  onboarding: ['login', 'waving_hand'], feedback: ['reviews', 'feedback'], accountability: ['fact_check', 'balance'], transparency: ['visibility', 'lightbulb'],
+  fear: ['sentiment_worried', 'warning'], hope: ['wb_sunny', 'volunteer_activism'], frustration: ['sentiment_dissatisfied', 'mood_bad'],
+  joy: ['sentiment_very_satisfied', 'celebration'], burnout: ['battery_alert', 'bolt'], resilience: ['fitness_center', 'eco'],
+  healing: ['healing', 'spa'], grief: ['sentiment_sad', 'favorite'], stress: ['bolt', 'sentiment_dissatisfied'],
+  wellbeing: ['self_improvement', 'favorite'], trauma: ['healing', 'warning'],
+  system: ['account_tree', 'hub'], systems: ['account_tree', 'hub'], structure: ['account_tree', 'foundation'], policy: ['policy', 'gavel'],
+  institution: ['account_balance', 'domain'], institutional: ['account_balance', 'domain'], government: ['account_balance', 'gavel'],
+  university: ['school', 'account_balance'], bureaucracy: ['description', 'gavel'], barrier: ['block', 'fence'], barriers: ['block', 'fence'],
+  access: ['key', 'accessible'], accessibility: ['accessible', 'accessibility_new'], infrastructure: ['foundation', 'construction'],
+  'social determinants': ['diversity_3', 'health_and_safety'],
+  support: ['support_agent', 'volunteer_activism'], 'institutional support': ['account_balance', 'support_agent'], 'peer support': ['groups', 'volunteer_activism'],
+};
+
 let iconEngineState = 'idle';
 let _iconEngineCbs = [];
 // cb may return false to unsubscribe (used by pickers whose DOM node is gone)
@@ -1951,6 +2012,8 @@ function _ensureIconEngine() {
 async function suggestIcons(label) {
   const text = (label || '').trim().slice(0, 200);
   if (!text) return [];
+  const alias = ICON_ALIASES[text.toLowerCase().replace(/\s+/g, ' ')];
+  if (alias) return alias.slice();
   try { await _ensureIconEngine(); } catch { return []; }
   const e = _iconEngine;
   const out = await e.extract(text, { pooling: 'mean', normalize: true });
@@ -1991,6 +2054,18 @@ async function iconDemo() {
     console[ok ? 'log' : 'error'](ok ? 'PASS' : 'FAIL', JSON.stringify(label), got);
     console.assert(ok, `iconDemo case failed: ${label}`);
   }
+
+  // Alias map: every value must be a real Material Symbol, and an exact
+  // label match must short-circuit the model.
+  const valid = new Set(_iconEngine ? _iconEngine.names : []);
+  if (valid.size) {
+    for (const [k, v] of Object.entries(ICON_ALIASES)) {
+      for (const n of v) console.assert(valid.has(n), `ICON_ALIASES["${k}"]: unknown icon "${n}"`);
+    }
+  }
+  const eth = await suggestIcons('Ethics');
+  console.assert(eth.join() === 'balance,gavel', `alias short-circuit failed: ${eth}`);
+  console.log('iconDemo: alias checks done');
 }
 
 // ─── Self-check (open with #test) ─────────────────────────────────────────────
