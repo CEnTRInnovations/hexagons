@@ -16,9 +16,9 @@ The tool's core contribution is making adjacency relationships computable: which
 
 ## Tech Stack
 
-- **Single-file SPA**: Everything lives in `index.html` — HTML, CSS, and vanilla JavaScript. No build system, no npm, no bundler.
+- **Single-file SPA**: All code lives in `index.html` — HTML, CSS, and vanilla JavaScript. No build system, no npm, no bundler. The only local static asset is `assets/logo.png` (the nav mark; `96×93`, displayed at 44px).
 - **Rendering**: SVG canvas (`<svg id="canvas">`) with three layer groups: `#grid`, `#edges`, `#hexes`.
-- **Dependencies**: Google Fonts only (`Alegreya`, `Alegreya Sans`, `Alegreya Sans SC`, `Material Symbols Outlined` for toolbar icons). No JavaScript libraries.
+- **Dependencies**: Google Fonts (`Alegreya`, `Alegreya Sans`, `Alegreya Sans SC`, `Material Symbols Outlined`). No JavaScript libraries in the core app. The **optional** icon-suggestion feature (`suggestIcons` / `_loadIconEngine`) lazy-loads `@huggingface/transformers` from the jsdelivr CDN plus the local `vendor/icon-*.{json,bin}` corpus on first use; it fails closed (`iconEngineState = 'failed'`) with no network and blocks nothing else.
 - **Deployment**: GitHub Pages (static hosting). The `CNAME` file points to a custom domain.
 
 ---
