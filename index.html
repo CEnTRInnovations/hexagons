@@ -379,6 +379,22 @@
     .a-edge-pop button:hover { filter: brightness(0.95); }
     .a-edge-pop button[data-pol="1"]  { background: var(--secondary); color: #fff; border-color: var(--secondary); }
     .a-edge-pop button[data-pol="-1"] { background: var(--serve); color: #fff; border-color: var(--serve); }
+
+    /* ── EDGE DATA LEGEND ── */
+    .a-edge-legend {
+      margin-top: 0.5rem;
+      padding: 0.4rem 0.55rem;
+      background: var(--bg-main);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      font-family: "Alegreya Sans", sans-serif;
+      font-size: 0.72rem;
+      line-height: 1.6;
+      color: var(--text-muted);
+    }
+    .a-edge-legend .a-leg-pos { color: var(--secondary); font-weight: 700; }
+    .a-edge-legend .a-leg-neg { color: var(--serve); font-weight: 700; }
+    .a-edge-legend .a-leg-hint { margin-top: 0.2rem; font-style: italic; opacity: 0.8; }
   </style>
 </head>
 <body>
@@ -466,7 +482,7 @@
 
     <!-- Edge data -->
     <div>
-      <div class="a-section-title">Edge Data</div>
+      <div class="a-section-title">Edge Classification</div>
       <div class="a-section-stripe" style="background:var(--challenge)"></div>
       <div style="display:flex; flex-direction:column; gap:0.4rem;">
         <div class="a-toggle-row">
@@ -481,6 +497,12 @@
           <span>Direction (influence)</span>
           <input id="collectDirection" type="checkbox" />
         </div>
+      </div>
+      <div id="edgeLegend" class="a-edge-legend" hidden>
+        <div data-leg="polarity"><span class="a-leg-pos">+</span>&nbsp;reinforcing&nbsp;&nbsp;<span class="a-leg-neg">–</span>&nbsp;opposing</div>
+        <div data-leg="magnitude"><b>1–3</b>&nbsp;strength of the link</div>
+        <div data-leg="direction"><b>▸</b>&nbsp;influences (points source → target)</div>
+        <div class="a-leg-hint">Hover an edge dot to classify it.</div>
       </div>
     </div>
 
@@ -508,7 +530,7 @@
         <g id="edgeBadges"></g>
       </svg>
     </div>
-    <div class="a-hint">Click to add · Drag to move · Del to remove · Enable Edge Data to classify edges</div>
+    <div class="a-hint">Click to add · Drag to move · Del to remove · Enable Edge Classification to mark edges</div>
     <div id="edgePop" class="a-edge-pop"></div>
   </div>
 
@@ -670,7 +692,14 @@ function renderAdjacency() {
       const hb = hexes.find(h => h.id === b);
       const d = document.createElement('div');
       d.className = 'a-adj-item';
-      d.textContent = `${ha ? (ha.text || '(empty)') : a}  ↔  ${hb ? (hb.text || '(empty)') : b}`;
+      const la = ha ? (ha.text || '').trim() : '', lb = hb ? (hb.text || '').trim() : '';
+      let left = la || (ha ? '(empty)' : String(a)), right = lb || (hb ? '(empty)' : String(b)), sep = '  ↔  ';
+      const dir = collectDirection && la && lb ? edgeField(edgeKey(la, lb), 'direction') : undefined;
+      if (dir === 'forward' || dir === 'reverse') {
+        [left, right] = influenceRows(la, lb)[0];
+        sep = '  →  ';
+      }
+      d.textContent = `${left}${sep}${right}`;
       adjDiv.appendChild(d);
     });
   }
@@ -705,59 +734,86 @@ function renderAdjacency() {
 
     if (!classifiable || !anyEdgeDimension()) return;
 
-    // Interactive badge at the edge midpoint, in the overlay group above #hexes —
-    // the line itself sits under the two (touching) hexes and can't be hovered.
-    // Polarity sits on the midpoint dot; magnitude and direction are pushed to
-    // opposite sides along the edge's perpendicular so the three never overlap.
+    // One badge per edge, in the overlay group above #hexes (the line itself sits
+    // under the two touching hexes and can't be hovered). All set dimensions live
+    // in a single pill offset clear of the hex overlap, with a leader line back to
+    // the midpoint; one transparent hit-rect over it opens the editor popup.
+    // ponytail: OFF/pill metrics are eyeballed — tune visually, not by formula.
     const mx = (ha.x + hb.x) / 2, my = (ha.y + hb.y) / 2;
     const edgeAng = Math.atan2(hb.y - ha.y, hb.x - ha.x);
     const px = -Math.sin(edgeAng), py = Math.cos(edgeAng); // perpendicular unit vector
-    const OFF = 18;
-    const dot = svgEl('circle', {
-      cx: mx, cy: my, r: pol ? 11 : 7,
-      fill: pol ? color : 'rgba(62,59,53,0.28)',
-      stroke: 'var(--bg-main)', 'stroke-width': 2
-    });
-    dot.style.cursor = 'pointer';
-    dot.addEventListener('mouseenter', ev => openEdgePop(ev, la, lb));
-    dot.addEventListener('mouseleave', scheduleEdgePopClose);
-    dot.addEventListener('click', ev => { ev.stopPropagation(); openEdgePop(ev, la, lb); });
-    gBadge.appendChild(dot);
-    if (pol) {
-      const t = svgEl('text', {
-        x: mx, y: my, 'text-anchor': 'middle', 'dominant-baseline': 'central',
-        'font-size': 16, 'font-weight': 700, fill: '#fff', 'pointer-events': 'none'
+    const OFF = Math.max(34, (ha.size || hexSize) * 0.8); // clear the (touching) hex bodies
+
+    const tokens = [];
+    if (pol === 1 || pol === -1) tokens.push({ kind: 'pol', v: pol });
+    if (mag === 1 || mag === 2 || mag === 3) tokens.push({ kind: 'mag', v: mag });
+    if (dir === 'forward' || dir === 'reverse') tokens.push({ kind: 'dir' });
+
+    const ax = tokens.length ? mx + px * OFF : mx;
+    const ay = tokens.length ? my + py * OFF : my;
+
+    if (tokens.length) {
+      gBadge.appendChild(svgEl('line', {
+        x1: mx, y1: my, x2: ax, y2: ay,
+        stroke: 'rgba(62,59,53,0.30)', 'stroke-width': 1, 'pointer-events': 'none'
+      }));
+      const CW = 17, PADX = 6, H = 22;
+      const w = PADX * 2 + tokens.length * CW;
+      const g = svgEl('g', { transform: `translate(${ax - w / 2},${ay - H / 2})`, 'pointer-events': 'none' });
+      g.appendChild(svgEl('rect', {
+        x: 0, y: 0, width: w, height: H, rx: 6,
+        fill: 'var(--bg-light)', stroke: 'var(--border)', 'stroke-width': 1
+      }));
+      tokens.forEach((tk, i) => {
+        const cx = PADX + i * CW + CW / 2;
+        if (tk.kind === 'pol') {
+          g.appendChild(svgEl('circle', {
+            cx, cy: H / 2, r: 8, fill: tk.v === 1 ? 'var(--secondary)' : 'var(--serve)'
+          }));
+          const t = svgEl('text', {
+            x: cx, y: H / 2, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+            'font-size': 13, 'font-weight': 700, fill: '#fff'
+          });
+          t.textContent = tk.v === 1 ? '+' : '–';
+          g.appendChild(t);
+        } else if (tk.kind === 'mag') {
+          const t = svgEl('text', {
+            x: cx, y: H / 2, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+            'font-size': 13, 'font-weight': 700, fill: 'var(--text)'
+          });
+          t.textContent = String(tk.v);
+          g.appendChild(t);
+        } else {
+          // triangle rotated parallel to the edge, pointing influencer → influenced,
+          // so direction stays unambiguous even though the pill sits off the edge
+          const [fromLabel] = influenceRows(la, lb)[0];
+          const flow = (ha.text || '').trim().toLowerCase() === fromLabel.toLowerCase()
+            ? edgeAng : edgeAng + Math.PI;
+          const s = 6;
+          const tip = [cx + Math.cos(flow) * s, H / 2 + Math.sin(flow) * s];
+          const p1 = [cx + Math.cos(flow + 2.4) * s, H / 2 + Math.sin(flow + 2.4) * s];
+          const p2 = [cx + Math.cos(flow - 2.4) * s, H / 2 + Math.sin(flow - 2.4) * s];
+          g.appendChild(svgEl('polygon', {
+            points: `${tip[0]},${tip[1]} ${p1[0]},${p1[1]} ${p2[0]},${p2[1]}`, fill: 'var(--text)'
+          }));
+        }
       });
-      t.textContent = pol === 1 ? '+' : '–';
-      gBadge.appendChild(t);
-    }
-    if (mag) {
-      const d = svgEl('text', {
-        x: mx + px * OFF, y: my + py * OFF, 'text-anchor': 'middle', 'dominant-baseline': 'central',
-        'font-size': 13, 'font-weight': 700, fill: 'var(--text)', 'pointer-events': 'none',
-        'paint-order': 'stroke', stroke: 'var(--bg-main)', 'stroke-width': 3
-      });
-      d.textContent = String(mag);
-      gBadge.appendChild(d);
-    }
-    if (dir) {
-      // influencer → influenced, in canvas coords; marker offset to the side opposite magnitude
-      const [fromLabel] = influenceRows(la, lb)[0];
-      const src = (ha.text || '').trim().toLowerCase() === fromLabel.toLowerCase() ? ha : hb;
-      const dst = src === ha ? hb : ha;
-      const ang = Math.atan2(dst.y - src.y, dst.x - src.x);
-      const cxm = mx - px * OFF, cym = my - py * OFF;
-      // ponytail: OFF=18 and the ±0.5 rad half-angle are eyeballed; tune visually.
-      const s = 7;
-      const tip = [cxm + Math.cos(ang) * s, cym + Math.sin(ang) * s];
-      const back = ang + Math.PI;
-      const p1 = [cxm + Math.cos(back + 0.5) * s, cym + Math.sin(back + 0.5) * s];
-      const p2 = [cxm + Math.cos(back - 0.5) * s, cym + Math.sin(back - 0.5) * s];
-      gBadge.appendChild(svgEl('polygon', {
-        points: `${tip[0]},${tip[1]} ${p1[0]},${p1[1]} ${p2[0]},${p2[1]}`,
-        fill: 'var(--text)', stroke: 'var(--bg-main)', 'stroke-width': 1.5, 'pointer-events': 'none'
+      gBadge.appendChild(g);
+    } else {
+      gBadge.appendChild(svgEl('circle', {
+        cx: mx, cy: my, r: 7, fill: 'rgba(62,59,53,0.28)',
+        stroke: 'var(--bg-main)', 'stroke-width': 2, 'pointer-events': 'none'
       }));
     }
+
+    const hit = svgEl('rect', {
+      x: ax - 18, y: ay - 14, width: 36, height: 28, rx: 7, fill: 'transparent'
+    });
+    hit.style.cursor = 'pointer';
+    hit.addEventListener('mouseenter', ev => openEdgePop(ev, la, lb));
+    hit.addEventListener('mouseleave', scheduleEdgePopClose);
+    hit.addEventListener('click', ev => { ev.stopPropagation(); openEdgePop(ev, la, lb); });
+    gBadge.appendChild(hit);
   });
 }
 
@@ -790,34 +846,34 @@ function openEdgePop(ev, la, lb) {
   clearTimeout(edgePopCloseTimer);
   edgePopTarget = { la, lb };
   edgePop.innerHTML = '';
-  if (collectDirection) {
-    edgePop.appendChild(edgePopRow('direction', 'dir', [
-      ['forward', `${la} → ${lb}`],
-      ['reverse', `${lb} → ${la}`],
-      ['clear', 'clear'],
-    ]));
-  }
+  // Row order matches the Edge Classification panel: polarity, magnitude, direction.
   if (collectPolarity) {
-    edgePop.appendChild(edgePopRow('polarity', '+/-', [
+    edgePop.appendChild(edgePopRow('polarity', 'Polarity', [
       ['1', '+', 1], ['-1', '–', -1], ['clear', 'clear'],
     ]));
   }
   if (collectMagnitude) {
-    edgePop.appendChild(edgePopRow('magnitude', 'mag', [
+    edgePop.appendChild(edgePopRow('magnitude', 'Strength', [
       ['1', '1'], ['2', '2'], ['3', '3'], ['clear', 'clear'],
     ]));
   }
-  edgePop.style.left = ev.clientX + 'px';
-  edgePop.style.top = ev.clientY + 'px';
+  if (collectDirection) {
+    edgePop.appendChild(edgePopRow('direction', 'Influence', [
+      ['forward', `${la} → ${lb}`],
+      ['reverse', `${lb} → ${la}`],
+      ['both', 'both ways'],
+    ]));
+  }
   edgePop.classList.add('is-open');
-  // Keep it on screen — the popup is fixed + translate(-50%,-50%), so its box
-  // straddles the anchor point; nudge the anchor until the box clears the edges.
-  const r = edgePop.getBoundingClientRect(), m = 8;
-  let cx = ev.clientX, cy = ev.clientY;
-  if (r.left < m) cx += m - r.left;
-  else if (r.right > innerWidth - m) cx -= r.right - (innerWidth - m);
-  if (r.top < m) cy += m - r.top;
-  else if (r.bottom > innerHeight - m) cy -= r.bottom - (innerHeight - m);
+  // Sit the popup clear of the edge/badge it edits: below the pointer, or above
+  // when there's no room below. Fixed + translate(-50%,-50%) → box straddles (cx,cy).
+  const r = edgePop.getBoundingClientRect(), m = 8, gap = 14;
+  let cx = ev.clientX;
+  let cy = ev.clientY + r.height / 2 + gap;
+  if (cx - r.width / 2 < m) cx = m + r.width / 2;
+  else if (cx + r.width / 2 > innerWidth - m) cx = innerWidth - m - r.width / 2;
+  if (cy + r.height / 2 > innerHeight - m) cy = ev.clientY - r.height / 2 - gap;
+  if (cy - r.height / 2 < m) cy = m + r.height / 2;
   edgePop.style.left = cx + 'px';
   edgePop.style.top = cy + 'px';
 }
@@ -838,7 +894,7 @@ edgePop.addEventListener('click', ev => {
   } else if (dim === 'magnitude') {
     setEdgeField(k, 'magnitude', val === 'clear' ? null : parseInt(val, 10));
   } else if (dim === 'direction') {
-    setEdgeField(k, 'direction', val === 'clear' ? null : resolveDirectionChoice(edgePopTarget.la, edgePopTarget.lb, val));
+    setEdgeField(k, 'direction', (val === 'both' || val === 'clear') ? null : resolveDirectionChoice(edgePopTarget.la, edgePopTarget.lb, val));
   }
   edgePop.classList.remove('is-open');
   render();
@@ -945,7 +1001,20 @@ function render(skipEditor) {
   hexes.forEach(h => gHex.appendChild(renderHex(h)));
   renderGrid();
   renderAdjacency();
+  syncEdgeLegend();
   if (!skipEditor) renderSelectedEditor();
+}
+
+// Show one legend line per enabled dimension; hide the box when none are on.
+function syncEdgeLegend() {
+  const leg = document.getElementById('edgeLegend');
+  const on = { polarity: collectPolarity, magnitude: collectMagnitude, direction: collectDirection };
+  let any = false;
+  leg.querySelectorAll('[data-leg]').forEach(r => {
+    r.hidden = !on[r.dataset.leg];
+    if (on[r.dataset.leg]) any = true;
+  });
+  leg.hidden = !any;
 }
 
 // ─── Selected editor ──────────────────────────────────────────────────────────
@@ -1038,12 +1107,23 @@ document.getElementById('snap').addEventListener('change', e => { snapToGrid = e
 [['collectPolarity', v => collectPolarity = v],
  ['collectMagnitude', v => collectMagnitude = v],
  ['collectDirection', v => collectDirection = v]].forEach(([id, set]) => {
-  document.getElementById(id).addEventListener('change', e => { set(e.target.checked); render(); });
+  document.getElementById(id).addEventListener('change', e => {
+    // Enabling Direction reinterprets existing polarity/magnitude marks from
+    // associative to causal (spec §11 D5) — confirm when there's data to reinterpret.
+    if (id === 'collectDirection' && e.target.checked && Object.keys(edgeData).length &&
+        !confirm('Enabling Direction treats existing edge marks as causal (influence), not just association. Continue?')) {
+      e.target.checked = false;
+      return;
+    }
+    set(e.target.checked);
+    render();
+  });
 });
 function syncDimensionCheckboxes() {
   document.getElementById('collectPolarity').checked = collectPolarity;
   document.getElementById('collectMagnitude').checked = collectMagnitude;
   document.getElementById('collectDirection').checked = collectDirection;
+  syncEdgeLegend();
 }
 
 // ─── Canvas coords ────────────────────────────────────────────────────────────
@@ -1639,6 +1719,51 @@ function demo() {
   render();
   ok(document.getElementById('edgeBadges').querySelector('polygon') !== null, 'direction marker rendered');
   hexes = savedHexes5; edgeData = savedData5; collectDirection = savedDir; render();
+
+  // Consolidated badge: all three dimensions collapse into one pill + one hit target
+  const savedB = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
+  hexes = [{ id: 1, text: 'care', color: '#3B6B35', x: 0, y: 0, size: 60 }, { id: 2, text: 'power', color: '#3B6B35', x: 100, y: 0, size: 60 }];
+  edgeData = {}; collectPolarity = collectMagnitude = collectDirection = true;
+  setEdgeField(edgeKey('care', 'power'), 'polarity', 1);
+  setEdgeField(edgeKey('care', 'power'), 'magnitude', 2);
+  setEdgeField(edgeKey('care', 'power'), 'direction', 'forward');
+  render();
+  const badges = document.getElementById('edgeBadges');
+  ok(badges.querySelectorAll('rect:not([fill="transparent"])').length === 1, 'one pill background for the whole edge');
+  ok(badges.querySelectorAll('rect[fill="transparent"]').length === 1, 'one hit target for the whole edge');
+  ok([...badges.querySelectorAll('text')].filter(t => t.textContent === '+').length === 1, 'polarity + drawn once, in the pill');
+  setEdgeField(edgeKey('care', 'power'), 'polarity', null);
+  setEdgeField(edgeKey('care', 'power'), 'magnitude', null);
+  setEdgeField(edgeKey('care', 'power'), 'direction', null);
+  render();
+  ok(badges.querySelectorAll('rect:not([fill="transparent"])').length === 0 && badges.querySelector('circle') !== null,
+     'unclassified edge falls back to a plain affordance dot');
+  [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection] = savedB; render();
+
+  // Adjacency list reflects stored direction with → (falls back to ↔)
+  const savedC = [hexes, edgeData, collectDirection];
+  hexes = [{ id: 1, text: 'Zeta', color: '#3B6B35', x: 0, y: 0, size: 60 }, { id: 2, text: 'apex', color: '#3B6B35', x: 100, y: 0, size: 60 }];
+  edgeData = {}; collectDirection = true;
+  setEdgeField(edgeKey('Zeta', 'apex'), 'direction', resolveDirectionChoice('apex', 'Zeta', 'forward'));
+  render();
+  ok(document.getElementById('adjacencyList').textContent.includes('apex  →  Zeta'), 'directed edge shows influencer → influenced in adjacency list');
+  collectDirection = false; render();
+  ok(document.getElementById('adjacencyList').textContent.includes('↔'), 'direction off → adjacency list back to ↔');
+  [hexes, edgeData, collectDirection] = savedC; render();
+
+  // Enabling Direction with existing edgeData prompts and reverts on cancel
+  const savedD = [edgeData, collectDirection];
+  const realConfirm = window.confirm;
+  edgeData = { 'a b': { polarity: 1 } }; collectDirection = false; syncDimensionCheckboxes();
+  window.confirm = () => false;
+  const dc = document.getElementById('collectDirection');
+  dc.checked = true; dc.dispatchEvent(new Event('change'));
+  ok(collectDirection === false && dc.checked === false, 'cancelling the Direction confirm reverts the checkbox');
+  window.confirm = () => true;
+  dc.checked = true; dc.dispatchEvent(new Event('change'));
+  ok(collectDirection === true, 'confirming the Direction prompt enables it');
+  window.confirm = realConfirm;
+  [edgeData, collectDirection] = savedD; syncDimensionCheckboxes(); render();
 
   // Task 6: exports
   const s6 = [hexes, edgeData, collectPolarity, collectMagnitude, collectDirection];
