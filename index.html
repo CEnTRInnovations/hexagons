@@ -384,6 +384,7 @@
     .a-edge-pop button:hover { filter: brightness(0.95); }
     .a-edge-pop button[data-pol="1"]  { background: var(--secondary); color: #fff; border-color: var(--secondary); }
     .a-edge-pop button[data-pol="-1"] { background: var(--serve); color: #fff; border-color: var(--serve); }
+    .a-edge-pop button.is-active { outline: 2px solid var(--primary); outline-offset: 1px; font-weight: 700; }
 
     /* ── EDGE DATA LEGEND ── */
     .a-edge-legend {
@@ -827,7 +828,7 @@ function renderAdjacency() {
 const edgePop = document.getElementById('edgePop');
 let edgePopCloseTimer = null;
 let edgePopTarget = null; // { la, lb }
-function edgePopRow(dim, label, buttons) {
+function edgePopRow(dim, label, buttons, activeVal) {
   const row = document.createElement('div');
   row.className = 'a-edge-pop-row';
   row.dataset.dim = dim;
@@ -843,6 +844,7 @@ function edgePopRow(dim, label, buttons) {
     b.dataset.val = val;
     b.textContent = text;
     if (pol !== undefined) b.dataset.pol = pol; // drives the +/- button colours from shipped CSS
+    if (val === activeVal) { b.classList.add('is-active'); b.setAttribute('aria-pressed', 'true'); }
     row.appendChild(b);
   });
   return row;
@@ -852,23 +854,32 @@ function openEdgePop(ev, la, lb) {
   clearTimeout(edgePopCloseTimer);
   edgePopTarget = { la, lb };
   edgePop.innerHTML = '';
+  // Highlight the edge's current value in each row (see .a-edge-pop button.is-active).
+  const k = edgeKey(la, lb);
+  const pol = edgeField(k, 'polarity');
+  const mag = edgeField(k, 'magnitude');
+  const dir = edgeField(k, 'direction');
+  // direction is stored relative to edgeKey order; map it back to the displayed la→lb / lb→la choice
+  const dirActive = (dir === 'forward' || dir === 'reverse')
+    ? (resolveDirectionChoice(la, lb, 'forward') === dir ? 'forward' : 'reverse')
+    : 'both'; // unset = bidirectional, a real state
   // Row order matches the Edge Classification panel: polarity, magnitude, direction.
   if (collectPolarity) {
     edgePop.appendChild(edgePopRow('polarity', 'Polarity', [
       ['1', '+', 1], ['-1', '–', -1], ['clear', 'clear'],
-    ]));
+    ], pol === 1 ? '1' : pol === -1 ? '-1' : null));
   }
   if (collectMagnitude) {
     edgePop.appendChild(edgePopRow('magnitude', 'Strength', [
       ['1', '1'], ['2', '2'], ['3', '3'], ['clear', 'clear'],
-    ]));
+    ], mag ? String(mag) : null));
   }
   if (collectDirection) {
     edgePop.appendChild(edgePopRow('direction', 'Influence', [
       ['forward', `${la} → ${lb}`],
       ['reverse', `${lb} → ${la}`],
       ['both', 'both ways'],
-    ]));
+    ], dirActive));
   }
   edgePop.classList.add('is-open');
   // Sit the popup clear of the edge/badge it edits: below the pointer, or above
@@ -1732,6 +1743,24 @@ function demo() {
   ok(dims.join(',') === 'direction,polarity,magnitude'.split(',').filter(d => d !== 'direction').join(','),
      'popup shows exactly the enabled dimensions in order');
   document.getElementById('edgePop').classList.remove('is-open');
+
+  // popup highlights the edge's current values
+  const savedData3 = edgeData;
+  edgeData = {};
+  collectPolarity = collectMagnitude = collectDirection = true;
+  setEdgeField(edgeKey('care', 'power'), 'polarity', -1);
+  setEdgeField(edgeKey('care', 'power'), 'magnitude', 2);
+  setEdgeField(edgeKey('care', 'power'), 'direction', resolveDirectionChoice('care', 'power', 'reverse'));
+  openEdgePop({ clientX: 0, clientY: 0 }, 'care', 'power');
+  const active = d => document.querySelector(`#edgePop [data-dim="${d}"] button.is-active`)?.dataset.val;
+  ok(active('polarity') === '-1', 'popup highlights stored polarity');
+  ok(active('magnitude') === '2', 'popup highlights stored magnitude');
+  ok(active('direction') === 'reverse', 'popup highlights stored direction (mapped to the displayed choice)');
+  setEdgeField(edgeKey('care', 'power'), 'direction', null);
+  openEdgePop({ clientX: 0, clientY: 0 }, 'care', 'power');
+  ok(active('direction') === 'both', 'unset direction highlights "both ways"');
+  document.getElementById('edgePop').classList.remove('is-open');
+  edgeData = savedData3;
   [collectPolarity, collectMagnitude, collectDirection] = savedFlags3;
 
   // Task 4: magnitude rendering
