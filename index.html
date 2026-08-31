@@ -163,6 +163,25 @@
       color: var(--text);
       margin-bottom: 0.1rem;
     }
+    .a-section-title--row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+    .a-mini-btn {
+      font-family: "Alegreya Sans SC", "Alegreya Sans", sans-serif;
+      font-size: 0.62rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.18rem 0.5rem;
+      cursor: pointer;
+      background: var(--bg-main);
+      color: var(--text-muted);
+    }
+    .a-mini-btn:hover { background: var(--bg-warm); color: var(--text); }
     .a-section-stripe {
       width: 24px; height: 2px;
       border-radius: 2px;
@@ -334,20 +353,6 @@
       text-transform: uppercase;
     }
 
-    /* ── SELECTED EDITOR ── */
-    .a-selected-row {
-      display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
-    }
-    .a-selected-row label {
-      font-family: "Alegreya Sans SC", "Alegreya Sans", sans-serif;
-      font-size: 0.67rem;
-      letter-spacing: 0.07em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      min-width: 36px;
-    }
-    .a-selected-row input[type="text"] { flex: 1; }
-
     /* ── EDGE POLARITY POPUP ── */
     .a-edge-pop {
       position: fixed;
@@ -436,8 +441,8 @@
   <!-- CONTROLS PANEL -->
   <div class="a-panel">
 
-    <!-- New hex -->
-    <div>
+    <!-- New hex (shown when nothing is selected) -->
+    <div id="newHexSection">
       <div class="a-section-title">New Hexagon</div>
       <div class="a-section-stripe"></div>
       <label class="a-label">Label text</label>
@@ -446,6 +451,16 @@
       <div id="newIconSuggestions" class="a-icon-suggestions"></div>
       <label class="a-label">Color</label>
       <div id="newColorSwatches" class="a-swatches"></div>
+    </div>
+
+    <!-- Edit hex (shown when a hex is selected — same slot as New Hexagon) -->
+    <div id="editHexSection" hidden>
+      <div class="a-section-title a-section-title--row">
+        <span>Edit Hexagon</span>
+        <button id="btnNewHex" type="button" class="a-mini-btn">+ New</button>
+      </div>
+      <div class="a-section-stripe" style="background:var(--primary)"></div>
+      <div id="selectedEditor"></div>
     </div>
 
     <hr class="a-section-divider" />
@@ -467,15 +482,6 @@
           <input id="snap" type="checkbox" checked />
         </div>
       </div>
-    </div>
-
-    <hr class="a-section-divider" />
-
-    <!-- Selected hex editor -->
-    <div>
-      <div class="a-section-title">Selected Hex</div>
-      <div class="a-section-stripe" style="background:var(--primary)"></div>
-      <div id="selectedEditor"><span class="a-muted">Click a hex to select it.</span></div>
     </div>
 
     <hr class="a-section-divider" />
@@ -530,7 +536,7 @@
         <g id="edgeBadges"></g>
       </svg>
     </div>
-    <div class="a-hint">Click to add · Drag to move · Del to remove · Enable Edge Classification to mark edges</div>
+    <div class="a-hint">Click to add · Drag to move · Del to remove · Esc to deselect</div>
     <div id="edgePop" class="a-edge-pop"></div>
   </div>
 
@@ -1002,7 +1008,15 @@ function render(skipEditor) {
   renderGrid();
   renderAdjacency();
   syncEdgeLegend();
+  syncHexPanels();
   if (!skipEditor) renderSelectedEditor();
+}
+
+// New Hexagon and Edit Hexagon share the top slot — show exactly one, by selection.
+function syncHexPanels() {
+  const editing = hexes.some(h => h.id === selectedId);
+  document.getElementById('newHexSection').hidden = editing;
+  document.getElementById('editHexSection').hidden = !editing;
 }
 
 // Show one legend line per enabled dimension; hide the box when none are on.
@@ -1021,21 +1035,21 @@ function syncEdgeLegend() {
 function renderSelectedEditor() {
   const div = document.getElementById('selectedEditor');
   const h = hexes.find(x => x.id === selectedId);
-  if (!h) {
-    div.innerHTML = '<span class="a-muted">Click a hex to select it.</span>';
-    return;
-  }
+  if (!h) { div.innerHTML = ''; return; } // section is hidden by syncHexPanels when nothing is selected
   div.innerHTML = '';
 
-  const textRow = document.createElement('div');
-  textRow.className = 'a-selected-row';
+  // Fields mirror the New Hexagon section: Label text, Icon, Color.
   const tLabel = document.createElement('label');
-  tLabel.textContent = 'Text';
+  tLabel.className = 'a-label';
+  tLabel.textContent = 'Label text';
   const tInput = document.createElement('input');
-  tInput.type = 'text'; tInput.value = h.text; tInput.style.flex = '1';
+  tInput.type = 'text'; tInput.value = h.text; tInput.style.marginBottom = '0.75rem';
   tInput.addEventListener('input', () => { h.text = tInput.value; render(true); });
-  textRow.appendChild(tLabel); textRow.appendChild(tInput);
-  div.appendChild(textRow);
+  div.appendChild(tLabel); div.appendChild(tInput);
+
+  const iLabel = document.createElement('label');
+  iLabel.className = 'a-label'; iLabel.textContent = 'Icon';
+  div.appendChild(iLabel);
 
   // ── Icon suggestions (idon) ──
   const iconWrap = document.createElement('div');
@@ -1102,6 +1116,10 @@ sizeInput.addEventListener('input', () => {
   sizeVal.textContent = hexSize;
   renderGrid();
 });
+document.getElementById('btnNewHex').addEventListener('click', () => {
+  selectedId = null; render();
+  document.getElementById('newText').focus();
+});
 document.getElementById('showGrid').addEventListener('change', e => { showGrid = e.target.checked; renderGrid(); });
 document.getElementById('snap').addEventListener('change', e => { snapToGrid = e.target.checked; });
 [['collectPolarity', v => collectPolarity = v],
@@ -1144,7 +1162,7 @@ svg.addEventListener('click', e => {
   if (snapToGrid) [x, y] = snapPos(x, y);
   const text = document.getElementById('newText').value.trim();
   hexes.push({ id: nextId++, x, y, text, color: newColor, size: hexSize, ...(newIcon ? { icon: newIcon } : {}) });
-  selectedId = hexes[hexes.length - 1].id;
+  selectedId = null; // stay in New Hexagon mode so repeated placement keeps working
   render();
 });
 
@@ -1675,6 +1693,27 @@ function demo() {
   hexes = savedHexes; edgeData = savedData;
   [collectPolarity, collectMagnitude, collectDirection] = s1flags; syncDimensionCheckboxes();
   [nextId, selectedId] = s1ids;
+
+  // Hex panels: New Hexagon and Edit Hexagon are mutually exclusive on selection
+  const sPanel = [hexes, selectedId, nextId, document.getElementById('newText').value];
+  hexes = [{ id: 1, text: 'solo', color: '#3B6B35', x: 0, y: 0, size: 60 }];
+  selectedId = null; render();
+  ok(!document.getElementById('newHexSection').hidden && document.getElementById('editHexSection').hidden,
+     'nothing selected → New Hexagon shown, Edit Hexagon hidden');
+  selectedId = 1; render();
+  ok(document.getElementById('newHexSection').hidden && !document.getElementById('editHexSection').hidden,
+     'hex selected → Edit Hexagon shown, New Hexagon hidden');
+  ok(/Edit Hexagon/.test(document.getElementById('editHexSection').textContent), 'edit section is titled "Edit Hexagon"');
+  document.getElementById('btnNewHex').click();
+  ok(selectedId === null && !document.getElementById('newHexSection').hidden, '"+ New" button deselects and returns to New Hexagon');
+  // placing a hex no longer auto-selects it (repeated placement stays in New mode)
+  hexes = []; selectedId = 999;
+  document.getElementById('newText').value = 'x';
+  svg.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 60, clientY: 60 }));
+  ok(hexes.length === 1 && selectedId === null, 'adding a hex clears selection (stays in New Hexagon mode)');
+  [hexes, selectedId, nextId] = sPanel;
+  document.getElementById('newText').value = sPanel[3];
+  render();
 
   // Task 2: parameters
   const savedFlags = [collectPolarity, collectMagnitude, collectDirection];

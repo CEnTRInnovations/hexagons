@@ -76,8 +76,9 @@ Mutable globals: `hexes`, `nextId`, `selectedId`, `hexSize`, `snapToGrid`, `show
 | `getClusters(pairs)` | Union-find over adjacent pairs → cluster arrays |
 | `renderAdjacency()` | Writes the adjacency list and cluster count to the panel |
 | `renderHex(h)` | Creates/updates a single hexagon's SVG elements |
-| `render()` | Full re-render: grid, adjacency, all hexes, selected editor |
-| `renderSelectedEditor()` | Populates the Selected Hex panel for the active hex |
+| `render()` | Full re-render: grid, adjacency, all hexes, hex-panel toggle, selected editor |
+| `renderSelectedEditor()` | Populates the Edit Hexagon panel (Label text / Icon / Color / Delete) for the active hex |
+| `syncHexPanels()` | Shows exactly one of `#newHexSection` / `#editHexSection` (same top slot) by whether `selectedId` resolves to a hex |
 | `svgCoords(e)` | Translates a pointer event to SVG-space coordinates |
 | `onHexMouseDown(e, id)` | Initiates drag on a hex; handles click-vs-drag disambiguation |
 | `dl(blob, name)` | Triggers a file download from a Blob |
@@ -118,7 +119,7 @@ Reads a `.bee` file and rebuilds the canvas from its `edges`. Positions aren't p
 Downloads an **edge list** — `from,to` columns, RFC 4180 quoted, built from `adjacentTermPairs()` — matching the CEnTR\*CANON ingestion contract in `docs/apiary-output-specification.md`. Columns after `from,to` are `weight` / `polarity` / `direction` **in that order**, each present **iff its parameter is on** — even if every value is empty (a classified edge whose parameter is off exports with no column for that dimension; this changed from the interim polarity behaviour, which force-added the column whenever any edge was classified). `direction` is a constant `1` on every row; its **presence** flags directed mode (`from` = influencer, read from row order), and an unclassified pair emits two rows (one each way). Filename: `{slug}_{YYYY-MM-DD}.csv` (dated — a point-in-time deliverable, unlike Save).
 
 ### Edge classification
-Three optional dimensions, each toggled by a checkbox in the **Edge Classification** panel section (`--challenge` stripe, between Selected Hex and Adjacency): **Polarity** (`+` / `–`), **Magnitude** (`1`–`3`), **Direction** (influence). All default off — with all off there is no midpoint affordance and edges render as plain lines. When any is on, `#edgeLegend` (populated by `syncEdgeLegend()`, called from `render()` and `syncDimensionCheckboxes()`) shows one key line per enabled dimension directly under the toggles.
+Three optional dimensions, each toggled by a checkbox in the **Edge Classification** panel section (`--challenge` stripe, between the hex editor and Adjacency): **Polarity** (`+` / `–`), **Magnitude** (`1`–`3`), **Direction** (influence). All default off — with all off there is no midpoint affordance and edges render as plain lines. When any is on, `#edgeLegend` (populated by `syncEdgeLegend()`, called from `render()` and `syncDimensionCheckboxes()`) shows one key line per enabled dimension directly under the toggles.
 
 Enabling **Direction** while `edgeData` is non-empty fires a `confirm()` (spec §11 D5): direction reinterprets existing polarity/magnitude marks from associative to causal, so the checkbox reverts on cancel. The **Adjacency** panel list renders a directed pair as `influencer  →  influenced` (via `influenceRows()`) when Direction is on and the pair has a stored direction; otherwise `a  ↔  b`.
 
@@ -150,6 +151,8 @@ Grid spacing is derived from `hexSize`: columns are offset by `hexSize * 1.5`, r
 ## Layout
 
 Two-column responsive grid (CSS Grid): a 280px control panel on the left and the SVG canvas on the right (min-width: 1024px breakpoint). Below 1024px, the panel stacks above the canvas.
+
+The panel's top slot holds **New Hexagon** _or_ **Edit Hexagon** — never both. `syncHexPanels()` (from `render()`) shows New Hexagon when nothing is selected and Edit Hexagon when `selectedId` points at a hex; Edit Hexagon's header has a **+ New** button that deselects. Placing a hex on the canvas clears `selectedId` (stays in New-Hexagon mode for repeated placement); clicking an existing hex, or dragging one, selects it; `Esc` deselects.
 
 ---
 
