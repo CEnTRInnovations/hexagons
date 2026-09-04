@@ -355,6 +355,9 @@
     .a-icon-suggestions .a-muted { font-size: 0.85rem; color: var(--text); opacity: 0.6; }
     .a-icon-suggest-btn { font: inherit; font-size: 0.8rem; padding: 2px 8px; border: 1px solid var(--primary); background: var(--bg-main); color: var(--primary); border-radius: 6px; cursor: pointer; }
     .a-icon-glyph-box { display: inline-flex; align-items: center; justify-content: center; }
+    .a-icon-search { display: flex; gap: 6px; margin: 0.35rem 0; }
+    .a-icon-search input { flex: 1; }
+    .a-icon-search-results { display: flex; flex-wrap: wrap; gap: 6px; }
 
     /* ── RANGE ROW ── */
     .a-range-row { display: flex; align-items: center; gap: 0.5rem; }
@@ -1964,6 +1967,77 @@ function mountIconPicker(wrap, opts) {
   let lastList = null; // most recent list passed to paint(), so cache updates can redraw it
   const alive = () => document.body.contains(wrap);
 
+  let lastSearchResults = null; // null = not searched yet, 'loading'/'failed', or an array of ids
+  let searchToken = 0;
+
+  const searchRow = document.createElement('div');
+  searchRow.className = 'a-icon-search';
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.placeholder = 'Search all icons…';
+  searchInput.setAttribute('aria-label', 'Search icon library');
+  const searchBtn = document.createElement('button');
+  searchBtn.type = 'button';
+  searchBtn.className = 'a-icon-suggest-btn';
+  searchBtn.textContent = 'Search';
+  searchRow.append(searchInput, searchBtn);
+  const searchResults = document.createElement('div');
+  searchResults.className = 'a-icon-search-results';
+
+  async function runSearch() {
+    const q = searchInput.value.trim();
+    if (!q) { lastSearchResults = null; paintSearch(); return; }
+    const token = ++searchToken;
+    lastSearchResults = 'loading';
+    paintSearch();
+    let ids;
+    try {
+      const res = await fetch(`https://api.iconify.design/search?query=${encodeURIComponent(q)}&prefix=${ICON_PREFIX}&limit=32`);
+      if (!res.ok) throw new Error('icon search ' + res.status);
+      const data = await res.json();
+      ids = data.icons || [];
+    } catch (e) {
+      console.error('icon search failed', e);
+      if (token === searchToken) { lastSearchResults = 'failed'; paintSearch(); }
+      return;
+    }
+    if (token !== searchToken || !alive()) return;
+    lastSearchResults = ids;
+    paintSearch();
+  }
+
+  function paintSearch() {
+    searchResults.innerHTML = '';
+    if (lastSearchResults === 'loading') {
+      const s = document.createElement('span');
+      s.className = 'a-muted'; s.textContent = 'searching…';
+      searchResults.appendChild(s); return;
+    }
+    if (lastSearchResults === 'failed') {
+      const s = document.createElement('span');
+      s.className = 'a-muted'; s.textContent = 'search unavailable — check your connection';
+      searchResults.appendChild(s); return;
+    }
+    if (!lastSearchResults) return;
+    if (!lastSearchResults.length) {
+      const s = document.createElement('span');
+      s.className = 'a-muted'; s.textContent = 'no icons found';
+      searchResults.appendChild(s); return;
+    }
+    lastSearchResults.forEach(id => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'a-icon-glyph';
+      b.appendChild(iconGlyphNode(id, 22));
+      b.setAttribute('aria-label', 'Use icon: ' + id);
+      b.addEventListener('click', () => choose(id));
+      searchResults.appendChild(b);
+    });
+  }
+
+  searchBtn.addEventListener('click', runSearch);
+  searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
+
   function choose(name) {
     opts.setIcon(name);
     paint(null);
@@ -2038,8 +2112,9 @@ function mountIconPicker(wrap, opts) {
   }
 
   onIconEngineChange(() => { if (!alive()) return false; paint(null); });
-  onIconCacheChange(() => { if (!alive()) return false; paint(lastList); });
+  onIconCacheChange(() => { if (!alive()) return false; paint(lastList); paintSearch(); });
   paint(null);
+  wrap.after(searchRow, searchResults);
   return { suggest, paint };
 }
 
