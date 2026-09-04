@@ -5,23 +5,20 @@ import { parseMetadata, buildCatalog } from './fetch-icon-catalog.mjs';
 
 const RAW = readFileSync(new URL('./fixtures/icons-sample.json', import.meta.url), 'utf8');
 
-test('parseMetadata strips the XSSI prefix and returns icons', () => {
+test('parseMetadata returns the collection JSON as-is', () => {
   const md = parseMetadata(RAW);
-  assert.ok(Array.isArray(md.icons));
-  assert.ok(md.icons.length >= 5);
+  assert.ok(md.categories);
+  assert.ok(Array.isArray(md.categories.Action));
 });
 
-test('buildCatalog drops icons with both logo+brand tags, keeps meaningful ones', () => {
+test('buildCatalog prefixes names with mdi:, humanizes hyphens, dedupes, sorts', () => {
   const { names, docs } = buildCatalog(parseMetadata(RAW));
-  assert.ok(names.includes('delete'), 'concrete action icon should be kept');
-  assert.ok(names.includes('groups'), 'social icon with meaningful tags should be kept');
-  assert.ok(names.includes('verified'), 'icon with logo but not brand should be kept');
-  assert.ok(!names.includes('android'), 'icon with both logo+brand should be filtered');
-  assert.ok(!names.includes('blank_icon_no_tags'), 'tagless icon should be filtered');
+  assert.ok(names.includes('mdi:delete'), 'category icon should be kept and prefixed');
+  assert.ok(names.includes('mdi:blank-icon-example'), 'uncategorized icon should be kept too');
   assert.equal(names.length, docs.length);
-  const i = names.indexOf('delete');
-  assert.match(docs[i], /trash|garbage|bin/);
-  assert.match(docs[i], /^delete\. delete\. delete\./, 'humanized name is repeated up front');
+  assert.equal(names.length, 6, 'all 6 sample icons kept, none dropped');
+  const i = names.indexOf('mdi:trash-can-outline');
+  assert.match(docs[i], /^trash can outline\. trash can outline\. trash can outline\. Action$/, 'hyphens humanized, name repeated, category appended');
   // sorted, unique
   assert.deepEqual(names, [...names].sort());
   assert.equal(new Set(names).size, names.length);

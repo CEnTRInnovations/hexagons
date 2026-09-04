@@ -1,12 +1,15 @@
 # vendor/ — experimental idon icon suggestions
 
-Generated assets for the semantic icon-suggestion feature (see `docs/superpowers/specs/2026-08-29-idon-icon-suggestions-design.md`).
+Generated assets for the semantic icon-suggestion feature (see
+`docs/superpowers/specs/2026-08-29-idon-icon-suggestions-design.md` for the
+original design and `docs/superpowers/specs/2026-09-04-iconify-icon-switch-design.md`
+for the switch to the `mdi` icon set).
 
 ## Files
 
 | File | What | Regenerate |
 |---|---|---|
-| `icon-names.json` | Corpus metadata: `{model, dim, count, scale, names[]}` | `cd tools && npm install && npm run catalog && npm run build` |
+| `icon-names.json` | Corpus metadata: `{model, dim, count, scale, names[]}`. Names are Iconify ids (`"mdi:name"`). | `cd tools && npm install && npm run catalog && npm run build` |
 | `icon-vectors.bin` | icon embeddings, int8 quantized (`count` × `dim` bytes) | same |
 
 Total: ~1.6 MB. Both files are the precomputed icon corpus — not available on any CDN.
