@@ -50,6 +50,7 @@
     [role="button"]:focus-visible,
     .a-swatch:focus-visible,
     .a-icon-suggestions button:focus-visible,
+    .a-icon-search-results button:focus-visible,
     .a-edge-pop button:focus-visible {
       outline: 2px solid var(--primary);
       outline-offset: 2px;
@@ -346,9 +347,9 @@
 
     /* ── ICON SUGGESTIONS (idon) ── */
     .a-icon-suggestions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0.25rem 0 0.75rem; min-height: 34px; }
-    .a-icon-suggestions button { appearance: none; -webkit-appearance: none; font: inherit; }
-    .a-icon-suggestions .a-icon-glyph { display: inline-flex; align-items: center; justify-content: center; padding: 5px; border-radius: 6px; cursor: pointer; color: var(--text); background: var(--bg-main); border: 1px solid transparent; }
-    .a-icon-suggestions .a-icon-glyph:hover { border-color: var(--primary); }
+    .a-icon-suggestions button, .a-icon-search-results button { appearance: none; -webkit-appearance: none; font: inherit; }
+    .a-icon-suggestions .a-icon-glyph, .a-icon-search-results .a-icon-glyph { display: inline-flex; align-items: center; justify-content: center; padding: 5px; border-radius: 6px; cursor: pointer; color: var(--text); background: var(--bg-main); border: 1px solid transparent; }
+    .a-icon-suggestions .a-icon-glyph:hover, .a-icon-search-results .a-icon-glyph:hover { border-color: var(--primary); }
     .a-icon-suggestions .a-icon-glyph.active { border-color: var(--primary); background: var(--bg-mid); }
     .a-icon-suggestions .a-icon-clear { cursor: pointer; color: var(--serve); background: none; border: 1px solid transparent; padding: 5px; border-radius: 6px; }
     .a-icon-suggestions .a-icon-clear:hover { border-color: var(--serve); }
@@ -1998,7 +1999,7 @@ function mountIconPicker(wrap, opts) {
       ids = data.icons || [];
     } catch (e) {
       console.error('icon search failed', e);
-      if (token === searchToken) { lastSearchResults = 'failed'; paintSearch(); }
+      if (token === searchToken && alive()) { lastSearchResults = 'failed'; paintSearch(); }
       return;
     }
     if (token !== searchToken || !alive()) return;
