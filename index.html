@@ -347,13 +347,14 @@
     /* ── ICON SUGGESTIONS (idon) ── */
     .a-icon-suggestions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0.25rem 0 0.75rem; min-height: 34px; }
     .a-icon-suggestions button { appearance: none; -webkit-appearance: none; font: inherit; }
-    .a-icon-suggestions .material-symbols-outlined { font-size: 22px; padding: 5px; border-radius: 6px; cursor: pointer; color: var(--text); background: var(--bg-main); border: 1px solid transparent; }
-    .a-icon-suggestions .material-symbols-outlined:hover { border-color: var(--primary); }
-    .a-icon-suggestions .material-symbols-outlined.active { border-color: var(--primary); background: var(--bg-mid); }
-    .a-icon-suggestions .a-icon-clear { cursor: pointer; font-size: 18px; color: var(--serve); background: none; border: 1px solid transparent; padding: 5px; border-radius: 6px; }
+    .a-icon-suggestions .a-icon-glyph { display: inline-flex; align-items: center; justify-content: center; padding: 5px; border-radius: 6px; cursor: pointer; color: var(--text); background: var(--bg-main); border: 1px solid transparent; }
+    .a-icon-suggestions .a-icon-glyph:hover { border-color: var(--primary); }
+    .a-icon-suggestions .a-icon-glyph.active { border-color: var(--primary); background: var(--bg-mid); }
+    .a-icon-suggestions .a-icon-clear { cursor: pointer; color: var(--serve); background: none; border: 1px solid transparent; padding: 5px; border-radius: 6px; }
     .a-icon-suggestions .a-icon-clear:hover { border-color: var(--serve); }
     .a-icon-suggestions .a-muted { font-size: 0.85rem; color: var(--text); opacity: 0.6; }
     .a-icon-suggest-btn { font: inherit; font-size: 0.8rem; padding: 2px 8px; border: 1px solid var(--primary); background: var(--bg-main); color: var(--primary); border-radius: 6px; cursor: pointer; }
+    .a-icon-glyph-box { display: inline-flex; align-items: center; justify-content: center; }
 
     /* ── RANGE ROW ── */
     .a-range-row { display: flex; align-items: center; gap: 0.5rem; }
@@ -1942,10 +1943,25 @@ function _setIconEngineState(s) {
   });
 }
 
+// Small inline SVG (or an empty placeholder box, if not yet cached) for one
+// Iconify id. Shared by the picker's current-icon slot, suggestions, and
+// (Task 5) search results.
+function iconGlyphNode(fullName, sizePx) {
+  const holder = document.createElement('span');
+  holder.className = 'a-icon-glyph-box';
+  holder.style.width = holder.style.height = sizePx + 'px';
+  const data = getIconData(fullName);
+  if (data) {
+    holder.innerHTML = `<svg class="a-icon" viewBox="0 0 ${data.width} ${data.height}" width="${sizePx}" height="${sizePx}" fill="currentColor">${data.body}</svg>`;
+  }
+  return holder;
+}
+
 // Reusable icon-suggestion picker. opts: { getLabel, getIcon, setIcon(name|null), onChange? }
 function mountIconPicker(wrap, opts) {
   let reqToken = 0;
   let ran = false; // has a suggest request completed for the current label?
+  let lastList = null; // most recent list passed to paint(), so cache updates can redraw it
   const alive = () => document.body.contains(wrap);
 
   function choose(name) {
@@ -1955,20 +1971,22 @@ function mountIconPicker(wrap, opts) {
   }
 
   function paint(list) {
+    lastList = list;
     wrap.innerHTML = '';
     wrap.setAttribute('aria-live', 'polite');
     const icon = opts.getIcon();
     if (icon) {
       const cur = document.createElement('span');
-      cur.className = 'material-symbols-outlined active';
-      cur.textContent = icon; cur.title = icon;
+      cur.className = 'a-icon-glyph active';
+      cur.appendChild(iconGlyphNode(icon, 22));
+      cur.title = icon;
       cur.setAttribute('aria-label', 'Current icon: ' + icon);
       cur.setAttribute('role', 'img');
       wrap.appendChild(cur);
       const x = document.createElement('button');
       x.type = 'button';
-      x.className = 'material-symbols-outlined a-icon-clear';
-      x.textContent = 'close';
+      x.className = 'a-icon-clear';
+      x.innerHTML = '<svg class="a-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z"/></svg>';
       x.setAttribute('aria-label', 'Remove icon');
       x.addEventListener('click', () => choose(null));
       wrap.appendChild(x);
@@ -1987,8 +2005,8 @@ function mountIconPicker(wrap, opts) {
       if (name === icon) return;
       const g = document.createElement('button');
       g.type = 'button';
-      g.className = 'material-symbols-outlined';
-      g.textContent = name;
+      g.className = 'a-icon-glyph';
+      g.appendChild(iconGlyphNode(name, 22));
       g.setAttribute('aria-label', 'Use icon: ' + name);
       g.addEventListener('click', () => choose(name));
       wrap.appendChild(g);
@@ -2020,6 +2038,7 @@ function mountIconPicker(wrap, opts) {
   }
 
   onIconEngineChange(() => { if (!alive()) return false; paint(null); });
+  onIconCacheChange(() => { if (!alive()) return false; paint(lastList); });
   paint(null);
   return { suggest, paint };
 }
