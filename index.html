@@ -753,10 +753,18 @@ function svgEl(tag, attrs) {
 // Hexagon/picker icons are stored as Iconify ids ("mdi:name"). Path data is
 // fetched from the public Iconify API on first use and cached forever — SVG
 // path data for a fixed icon name never changes — in memory + localStorage.
-// Every icon in this app shares one prefix, so a batch fetch always shares one.
+// Rendering, aliases, and the suggestion engine all use this one prefix, so
+// their fetches always share it. The manual search box (below) can surface
+// icons from other Iconify sets too — _flushIconFetch groups by each key's
+// own prefix so those still resolve correctly.
 const ICON_PREFIX = 'mdi';
-const _iconCache = new Map();       // "mdi:name" -> { body, width, height }
-const _iconAttempted = new Set();   // "mdi:name" already fetched (success or failure) — never retried
+// Sets the manual search box may return results from, in addition to mdi.
+// Rendering/caching handles any prefix generically; this only widens search.
+const ICON_SEARCH_PREFIXES = [ICON_PREFIX, 'material-symbols', 'tabler', 'ph',
+  'academicons', 'healthicons', 'medical-icon', 'wi', 'game-icons', 'pinhead',
+  'gis', 'map', 'codicon'].join(',');
+const _iconCache = new Map();       // "prefix:name" -> { body, width, height }
+const _iconAttempted = new Set();   // "prefix:name" already fetched (success or failure) — never retried
 let _iconFetchQueue = new Set();
 let _iconFetchTimer = null;
 let _iconCacheCbs = [];
@@ -793,20 +801,30 @@ async function _flushIconFetch() {
   _iconFetchQueue = new Set();
   if (!keys.length) return;
   keys.forEach(k => _iconAttempted.add(k));
-  const names = keys.map(k => k.slice(k.indexOf(':') + 1));
-  try {
-    const res = await fetch(`https://api.iconify.design/${ICON_PREFIX}.json?icons=${names.join(',')}`);
-    if (!res.ok) throw new Error('iconify fetch ' + res.status);
-    const data = await res.json();
-    const dw = data.width || 24, dh = data.height || 24;
-    for (const name of Object.keys(data.icons || {})) {
-      const ic = data.icons[name];
-      _iconCache.set(ICON_PREFIX + ':' + name, { body: ic.body, width: ic.width || dw, height: ic.height || dh });
-    }
-    _persistIconCache();
-  } catch (e) {
-    console.error('icon fetch failed', e);
+  // Group by each key's own prefix — search can return icons outside mdi,
+  // and each prefix needs its own request to Iconify's per-set icon endpoint.
+  const byPrefix = new Map();
+  for (const key of keys) {
+    const i = key.indexOf(':');
+    const prefix = key.slice(0, i), name = key.slice(i + 1);
+    if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
+    byPrefix.get(prefix).push(name);
   }
+  await Promise.all([...byPrefix].map(async ([prefix, names]) => {
+    try {
+      const res = await fetch(`https://api.iconify.design/${prefix}.json?icons=${names.join(',')}`);
+      if (!res.ok) throw new Error('iconify fetch ' + res.status);
+      const data = await res.json();
+      const dw = data.width || 24, dh = data.height || 24;
+      for (const name of Object.keys(data.icons || {})) {
+        const ic = data.icons[name];
+        _iconCache.set(prefix + ':' + name, { body: ic.body, width: ic.width || dw, height: ic.height || dh });
+      }
+    } catch (e) {
+      console.error('icon fetch failed', e);
+    }
+  }));
+  _persistIconCache();
   _iconCacheCbs = _iconCacheCbs.filter(cb => {
     try { return cb() !== false; } catch (e) { console.error(e); return true; }
   });
@@ -1995,7 +2013,7 @@ function mountIconPicker(wrap, opts) {
     paintSearch();
     let ids;
     try {
-      const res = await fetch(`https://api.iconify.design/search?query=${encodeURIComponent(q)}&prefix=${ICON_PREFIX}&limit=32`);
+      const res = await fetch(`https://api.iconify.design/search?query=${encodeURIComponent(q)}&prefixes=${ICON_SEARCH_PREFIXES}&limit=32`);
       if (!res.ok) throw new Error('icon search ' + res.status);
       const data = await res.json();
       ids = data.icons || [];
