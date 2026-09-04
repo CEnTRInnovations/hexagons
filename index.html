@@ -1184,6 +1184,7 @@ function renderHex(h) {
         width: iconSize, height: iconSize,
         viewBox: `0 0 ${iconData.width} ${iconData.height}`,
         fill: textColor,
+        color: textColor,
         'pointer-events': 'none'
       });
       ic.innerHTML = iconData.body;
@@ -2304,8 +2305,10 @@ function demo() {
 
     _iconCache.set(fakeKey, { body: '<path d="M1 1"/>', width: 24, height: 24 });
     _persistIconCache();
-    const stored = JSON.parse(localStorage.getItem('apiary_icon_cache'));
-    ok(stored[fakeKey] && stored[fakeKey].body === '<path d="M1 1"/>', 'icon cache persists to localStorage');
+    try {
+      const stored = JSON.parse(localStorage.getItem('apiary_icon_cache'));
+      ok(stored[fakeKey] && stored[fakeKey].body === '<path d="M1 1"/>', 'icon cache persists to localStorage');
+    } catch (e) { /* private browsing / hostile localStorage — not fatal to the rest of demo() */ }
     _iconCache.delete(fakeKey);
     _persistIconCache();
   }
@@ -2517,7 +2520,7 @@ function demo() {
 buildNewColorPicker();
 
 // A hex's icon may not be cached on first render; redraw once fetches land.
-onIconCacheChange(() => { render(); });
+onIconCacheChange(() => { render(true); });
 
 const newTextInput = document.getElementById('newText');
 const newIconPicker = mountIconPicker(document.getElementById('newIconSuggestions'), {
