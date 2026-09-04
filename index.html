@@ -1172,17 +1172,18 @@ function renderHex(h) {
   let cursorY = h.y - stackH / 2;
 
   if (hasIcon) {
-    const ic = svgEl('text', {
-      x: h.x, y: cursorY + iconSize * 0.5,
-      'text-anchor': 'middle', 'dominant-baseline': 'central',
-      'font-family': '"Material Symbols Outlined"',
-      'font-feature-settings': "'liga'",
-      'font-size': iconSize,
-      fill: textColor,
-      'pointer-events': 'none'
-    });
-    ic.textContent = h.icon;
-    g.appendChild(ic);
+    const iconData = getIconData(h.icon);
+    if (iconData) {
+      const ic = svgEl('svg', {
+        x: h.x - iconSize / 2, y: cursorY,
+        width: iconSize, height: iconSize,
+        viewBox: `0 0 ${iconData.width} ${iconData.height}`,
+        fill: textColor,
+        'pointer-events': 'none'
+      });
+      ic.innerHTML = iconData.body;
+      g.appendChild(ic);
+    }
     cursorY += iconSize + gap;
   }
 
@@ -2418,6 +2419,9 @@ function demo() {
 }
 // ─── Init ─────────────────────────────────────────────────────────────────────
 buildNewColorPicker();
+
+// A hex's icon may not be cached on first render; redraw once fetches land.
+onIconCacheChange(() => { render(); });
 
 const newTextInput = document.getElementById('newText');
 const newIconPicker = mountIconPicker(document.getElementById('newIconSuggestions'), {
