@@ -37,7 +37,7 @@ test('built corpus ranks obvious labels correctly', { skip: !existsSync(new URL(
   console.log('top5 team:', team);
   console.log('top5 warning:', warning);
 
-  assert.ok(money.some((n) => /payment|money|cash|wallet|attach_money/.test(n)));
-  assert.ok(team.some((n) => /group|people|diversity/.test(n)));
-  assert.ok(warning.some((n) => /warning|report|error|priority_high/.test(n)));
+  assert.ok(money.some((n) => /cash|money|wallet|currency|bank|payment/.test(n)));
+  assert.ok(team.some((n) => /account.?group|people|team/.test(n)));
+  assert.ok(warning.some((n) => /alert|warning|exclamation|caution/.test(n)));
 });
