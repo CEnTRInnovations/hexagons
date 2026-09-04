@@ -744,6 +744,69 @@ function svgEl(tag, attrs) {
   return el;
 }
 
+// ─── Icon glyph cache (Iconify) ─────────────────────────────────────────────
+// Hexagon/picker icons are stored as Iconify ids ("mdi:name"). Path data is
+// fetched from the public Iconify API on first use and cached forever — SVG
+// path data for a fixed icon name never changes — in memory + localStorage.
+// Every icon in this app shares one prefix, so a batch fetch always shares one.
+const ICON_PREFIX = 'mdi';
+const _iconCache = new Map();       // "mdi:name" -> { body, width, height }
+const _iconAttempted = new Set();   // "mdi:name" already fetched (success or failure) — never retried
+let _iconFetchQueue = new Set();
+let _iconFetchTimer = null;
+let _iconCacheCbs = [];
+
+function onIconCacheChange(cb) { _iconCacheCbs.push(cb); }
+
+(function _hydrateIconCache() {
+  try {
+    const raw = localStorage.getItem('apiary_icon_cache');
+    if (!raw) return;
+    for (const [k, v] of Object.entries(JSON.parse(raw))) { _iconCache.set(k, v); _iconAttempted.add(k); }
+  } catch (e) { /* private browsing / corrupt data — start empty, not fatal */ }
+})();
+
+function _persistIconCache() {
+  try { localStorage.setItem('apiary_icon_cache', JSON.stringify(Object.fromEntries(_iconCache))); }
+  catch (e) { /* quota / private browsing — cache stays in-memory only for this session */ }
+}
+
+function getIconData(key) {
+  if (_iconCache.has(key)) return _iconCache.get(key);
+  if (!_iconAttempted.has(key)) _queueIconFetch(key);
+  return null;
+}
+
+function _queueIconFetch(key) {
+  _iconFetchQueue.add(key);
+  clearTimeout(_iconFetchTimer);
+  _iconFetchTimer = setTimeout(_flushIconFetch, 0);
+}
+
+async function _flushIconFetch() {
+  const keys = [..._iconFetchQueue];
+  _iconFetchQueue = new Set();
+  if (!keys.length) return;
+  keys.forEach(k => _iconAttempted.add(k));
+  const names = keys.map(k => k.slice(k.indexOf(':') + 1));
+  try {
+    const res = await fetch(`https://api.iconify.design/${ICON_PREFIX}.json?icons=${names.join(',')}`);
+    if (!res.ok) throw new Error('iconify fetch ' + res.status);
+    const data = await res.json();
+    const dw = data.width || 24, dh = data.height || 24;
+    for (const name of Object.keys(data.icons || {})) {
+      const ic = data.icons[name];
+      _iconCache.set(ICON_PREFIX + ':' + name, { body: ic.body, width: ic.width || dw, height: ic.height || dh });
+    }
+    _persistIconCache();
+  } catch (e) {
+    console.error('icon fetch failed', e);
+  }
+  _iconCacheCbs = _iconCacheCbs.filter(cb => {
+    try { return cb() !== false; } catch (e) { console.error(e); return true; }
+  });
+}
+
 // ─── Grid ─────────────────────────────────────────────────────────────────────
 function renderGrid() {
   gGrid.innerHTML = '';
@@ -2125,6 +2188,30 @@ function demo() {
   loadBeeData({ edges: [{ from: 'alpha', to: 'beta', effect: -1 }, { from: 'beta', to: 'gamma' }] });
   ok(edgeField(edgeKey('alpha', 'beta'), 'polarity') === -1, '.bee effect round-trips through loadBeeData');
   ok(edgeField(edgeKey('beta', 'gamma'), 'polarity') === undefined, 'edge without effect stays unclassified');
+
+  // Icon cache: synchronous hit, miss-triggers-fetch-without-throwing, persistence round-trip.
+  // Uses fake keys and cleans up its own queued fetch so #test stays network-free.
+  {
+    const fakeKey = 'mdi:__demo_fake_icon__';
+    _iconCache.set(fakeKey, { body: '<path d="M0 0"/>', width: 24, height: 24 });
+    ok(getIconData(fakeKey) && getIconData(fakeKey).body === '<path d="M0 0"/>', 'cached icon returns synchronously');
+    _iconCache.delete(fakeKey);
+
+    const missKey = 'mdi:__demo_uncached__';
+    ok(getIconData(missKey) === null, 'uncached icon returns null (not throw) on first lookup');
+    ok(_iconFetchQueue.has(missKey), 'uncached lookup queues a background fetch');
+    // Cancel the queued fetch so this self-check never touches the network.
+    clearTimeout(_iconFetchTimer);
+    _iconFetchQueue = new Set();
+    _iconAttempted.delete(missKey);
+
+    _iconCache.set(fakeKey, { body: '<path d="M1 1"/>', width: 24, height: 24 });
+    _persistIconCache();
+    const stored = JSON.parse(localStorage.getItem('apiary_icon_cache'));
+    ok(stored[fakeKey] && stored[fakeKey].body === '<path d="M1 1"/>', 'icon cache persists to localStorage');
+    _iconCache.delete(fakeKey);
+    _persistIconCache();
+  }
 
   hexes = savedHexes; edgeData = savedData;
   [collectPolarity, collectMagnitude, collectDirection] = s1flags; syncDimensionCheckboxes();
