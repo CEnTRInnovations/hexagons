@@ -1882,7 +1882,7 @@ const ICON_SCORE_FLOOR = 0.3; // ponytail: cosine floor, tune via iconDemo() if 
 // glyph (no lexical overlap with any icon name/tag). Keys are lowercased,
 // whitespace-collapsed labels; an exact match here short-circuits the model
 // entirely (instant, no download). Edit freely — every value must be a real
-// Material Symbol name (checked by iconDemo()).
+// mdi:name (checked by iconDemo()).
 const ICON_ALIASES = {
   trust: ['mdi:handshake-outline', 'mdi:shield-check-outline'], relationship: ['mdi:account-multiple-outline', 'mdi:handshake-outline'], relationships: ['mdi:account-multiple-outline', 'mdi:handshake-outline'],
   partnership: ['mdi:handshake-outline', 'mdi:account-group'], partner: ['mdi:handshake-outline', 'mdi:account-group'], partners: ['mdi:handshake-outline', 'mdi:account-group'],
@@ -2187,9 +2187,9 @@ async function suggestIcons(label) {
 
 async function iconDemo() {
   const cases = [
-    ['money', /payment|money|cash|wallet|savings|attach_money/],
-    ['team', /group|people|diversity/],
-    ['warning', /warning|report|error|priority_high/],
+    ['money', /cash|money|wallet|currency|bank|payment/],
+    ['team', /account.?group|people|team/],
+    ['warning', /alert|warning|exclamation/],
     ['', null],
     ['qwertyuiop asdfghjkl', null], // gibberish → nothing clears the floor
   ];
@@ -2201,7 +2201,7 @@ async function iconDemo() {
     console.assert(ok, `iconDemo case failed: ${label}`);
   }
 
-  // Alias map: every value must be a real Material Symbol, and an exact
+  // Alias map: every value must be a real mdi:name, and an exact
   // label match must short-circuit the model.
   const valid = new Set(_iconEngine ? _iconEngine.names : []);
   if (valid.size) {
@@ -2210,7 +2210,7 @@ async function iconDemo() {
     }
   }
   const eth = await suggestIcons('Ethics');
-  console.assert(eth.join() === 'balance,gavel', `alias short-circuit failed: ${eth}`);
+  console.assert(eth.join() === 'mdi:scale-balance,mdi:gavel', `alias short-circuit failed: ${eth}`);
   console.log('iconDemo: alias checks done');
 }
 
